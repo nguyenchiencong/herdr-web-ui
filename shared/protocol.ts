@@ -156,13 +156,17 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  POST   /api/pane/image  { pane_id, content_type, data_base64 } -> { ok: true, path }
  *         pasted image -> file under <pane cwd>/.herdr-web-ui/ (under HERDR_WEB_PASTE_DIR when the
  *         server's environment sets it), path for the prompt
- *  GET    /api/pane/commands?pane_id=   -> { commands: SlashCommand[] } (the agent's slash
- *         commands: built-ins per agent kind + the user's and the project's custom commands)
+ *  GET    /api/pane/commands?pane_id=   -> { commands: SlashCommand[], agents: PaneAgent[] } (the agent's
+ *         slash commands: built-ins per agent kind + the user's and the project's custom commands; a pi
+ *         pane's agents are the pi-subagents agents its message can @-mention, [] for every other agent)
  *  GET    /api/pane/omo-tasks?pane_id=  -> OmoActivity (the background tasks and workflows the
- *         pane's OmO session started, a Claude Code pane's subagents, or a pi pane's running subagents
- *         (no workflows; pi keeps no record of one that ended): running ones, then those that ended in
- *         the last day; empty for any other pane or one whose session is not known yet. server_time:
+ *         pane's OmO session started, a Claude Code pane's subagents, or a pi pane's subagents and background
+ *         commands (no workflows): running ones, then the newest ten that ended in the last day, read from the
+ *         pane's transcript; empty for any other pane or one whose session is not known yet. server_time:
  *         that PC's clock, which the times are on)
+ *  GET    /api/pane/background-output?pane_id=&task_id=  -> BackgroundOutput (the end of a pi background
+ *         command's log, at most 64 KB; the log is named by the pane's transcript and must lie inside pi's
+ *         background-job folder, else output_not_found)
  *  GET    /api/pane/plan?pane_id=       -> PanePlan (the plan the pane's Claude Code or Codex session
  *         keeps: its task list or checklist, read from the transcript; null when it keeps none)
  *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
@@ -424,6 +428,13 @@ export interface PushKey {
   readonly public_key: string;
 }
 
+/** The settings a pi session had in effect where a turn starts: the model, the thinking level and the mode, each null when unrecorded. */
+export interface TurnSettings {
+  model: string | null;
+  reasoning_effort: string | null;
+  mode: string | null;
+}
+
 /** One turn of a structured agent conversation (the chat lens source). */
 export interface ConversationTurn {
   role: "user" | "assistant";
@@ -431,6 +442,8 @@ export interface ConversationTurn {
   /** Last recorded assistant activity, never the next user's timestamp. */
   end_ts?: string;
   parts: ConversationPart[];
+  /** pi only: the settings in effect where this turn starts. The chat draws a marker where they change between two turns. */
+  settings?: TurnSettings;
 }
 
 /** Evidence of skill activity, not a claim that the skill's workflow completed. */
@@ -456,14 +469,22 @@ export type ConversationPart =
     output_ref?: string; output_size?: number;
     /** images the call returned (pi reads a picture into the result); same fetch as a user image */
     images?: { media_type: string; ref: string }[];
+    /** the call's structured result (pi's `details`), as far as the chat shows it: scalars for the meta line, a classifier's `answers`, an agent or task id */
+    details?: Record<string, unknown>;
   }
   /** A native Claude/Codex user image, addressed by an opaque ref and fetched on demand: GET /api/pane/conversation/image?pane_id=…&ref=… */
   | { kind: "image"; media_type: string; ref: string }
-  /** the summary a compaction left; the conversation before it is what it sums up */
-  | { kind: "compact"; text: string }
+  /** the summary a compaction left; the conversation before it is what it sums up. `text` is the newest part of the summary,
+   * `earlier` the summary it folded in (pi writes that in a `<previous-summary>` block, shown on request); `text_cut` when the chat keeps
+   * only the start of either; `tokens` is the context the compaction folded, when pi recorded it */
+  | { kind: "compact"; text: string; earlier?: string; text_cut?: boolean; tokens?: number }
   /** a message the agent's runtime put in the user's seat (gjc's background-job result): it starts a turn, nobody typed it.
-   * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable") */
-  | { kind: "notice"; text: string; source?: string }
+   * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable").
+   * `label`: the words to show in place of the source's own (pi names a notice it does not otherwise read by its customType, humanised) */
+  | { kind: "notice"; text: string; source?: string; label?: string }
+  /** project context a harness injected under the prompt it follows (pi's pi-context): a chip on that prompt, opened to its text.
+   * `docs` and `tokens` are the counts the injection reports; `text_cut` when the chat keeps only the start of the text */
+  | { kind: "context"; text: string; text_cut?: boolean; docs?: number; tokens?: number }
   /** OmO's background tasks that ended, as OmO reported them back to the agent, or a Claude Code subagent that ended (its task notification): it starts a turn, nobody typed it */
   | { kind: "task_result"; tasks: OmoTaskResult[] };
 
@@ -496,9 +517,11 @@ export interface ConversationMetadata {
    * response reports its usage. `window` is null when the transcript does not say it.
    */
   context?: { used: number; window: number | null };
+  /** pi only: the mode the session's pi-modes state names, when the transcript records one. */
+  mode?: string | null;
 }
 
-/** One background task of an OmO session, one subagent of a Claude Code session, or one running subagent of a pi pane (GET /api/pane/omo-tasks), from OmO's task record, the subagent's files or pi's subagent record. */
+/** One background task of an OmO session, one subagent of a Claude Code session, or one subagent or background command of a pi pane that runs or ended (GET /api/pane/omo-tasks), from OmO's task record, the subagent's files, or pi's subagent and background-job records. */
 export interface OmoTask {
   id: string;
   /** the task's summary, else its description or name */
@@ -513,6 +536,10 @@ export interface OmoTask {
   turns: number | null;
   tool_calls: number | null;
   tokens: number | null;
+  /** a background command (`category: "command"`, pi's bg_run) that ended with an exit code: the code */
+  exit_code?: number | null;
+  /** a background command whose log the pane's transcript names, inside pi's background-job folder: GET /api/pane/background-output reads it */
+  output?: boolean;
 }
 
 /** One step of an OmO workflow (a DAG node); `error` is why a failed one failed. */
@@ -532,6 +559,13 @@ export interface OmoRun {
   started_at: string | null;
   ended_at: string | null;
   waves: OmoRunNode[][];
+}
+
+/** GET /api/pane/background-output: the end of a background command's log. `cut` when its start was left out; `size` is the whole log's bytes. */
+export interface BackgroundOutput {
+  output: string;
+  cut: boolean;
+  size: number;
 }
 
 /** GET /api/pane/omo-tasks */
@@ -974,6 +1008,22 @@ export interface SetSplitRatioRequest {
   path: boolean[];
   /** finite, inclusive 0.1..0.9, the bounds of herdr's split drag */
   ratio: number;
+}
+
+/** GET /api/pane/commands: one agent a pi pane's message can @-mention (pi-subagents' `@name`). */
+export interface PaneAgent {
+  /** the file's name without `.md`: what `@name` dispatches to */
+  name: string;
+  /** the `description:` of the agent's front matter; empty when it declares none */
+  description: string;
+  /** `project`: the trusted project's `.pi/agents` or `.agents/agents`, which shadows a personal agent of the same name */
+  source: "user" | "project";
+}
+
+/** GET /api/pane/commands as the client keeps it: the commands, and a pi pane's @-mentionable agents (none from a server that predates them). */
+export interface PaneCommandList {
+  commands: SlashCommand[];
+  agents: PaneAgent[];
 }
 
 /** GET /api/pane/commands: one slash command the pane's agent understands. */

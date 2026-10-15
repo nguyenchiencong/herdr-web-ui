@@ -17,7 +17,7 @@ import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, Minimiz
 
 import "./Composer.css";
 
-import type { AgentStatus, ConversationMetadata, PlanSummary, SlashCommand } from "../../shared/protocol.ts";
+import type { AgentStatus, ConversationMetadata, PaneAgent, PlanSummary, SlashCommand } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { composerDrafts } from "../lib/composerDraft.ts";
 import { paneStorageId } from "../../shared/machines.ts";
@@ -46,7 +46,7 @@ import { normalizeComposerImageFile } from "../lib/composerImageMime.ts";
 import { paneStatus } from "../lib/status.ts";
 import { modelLabel } from "../lib/modelName.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
-import { activeTrigger, applyCompletion, type ActiveTrigger } from "../lib/mentions.ts";
+import { activeTrigger, applyCompletion, mentionChoiceId, mentionText, rankMentionChoices, type ActiveTrigger, type MentionChoice } from "../lib/mentions.ts";
 import { resolveComposerMenuActiveItemId } from "../lib/composerMenuHighlight.ts";
 import { quickReplyButtons, useSettings } from "../lib/settings.ts";
 import { composerUsage, formatPercent, formatResetIn, HIGH_PERCENT, meterPercent, meterText, providerForAgent, statusWindows, usageName, useUsage, windowLabel } from "../lib/usage.ts";
@@ -300,6 +300,7 @@ export function Composer({
   const filledFrom = useRef<string | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [files, setFiles] = useState<string[]>([]);
+  const [agents, setAgents] = useState<PaneAgent[]>([]);
   const [slashUsage, setSlashUsage] = useState<Record<string, number>>(readSlashUsage);
   // the highlight lives in the refs below: a move redraws the menu, also when it lands on an index it held before
   const [, redrawMenu] = useState(0);
@@ -366,10 +367,16 @@ export function Composer({
     let live = true;
     void cachedPaneCommands(paneId, machineId, fetchPaneCommands)
       .then((next) => {
-        if (live) setCommands(next);
+        if (live) {
+          setCommands(next.commands);
+          setAgents(next.agents);
+        }
       })
       .catch(() => {
-        if (live) setCommands([]);
+        if (live) {
+          setCommands([]);
+          setAgents([]);
+        }
       });
     return () => {
       live = false;
@@ -628,13 +635,14 @@ export function Composer({
     () => groupedBySource ? COMMAND_SOURCES.flatMap((source) => filteredCommands.filter((command) => command.source === source)) : filteredCommands,
     [filteredCommands, groupedBySource],
   );
-  const choices: readonly (SlashCommand | string)[] = trigger?.kind === "slash" ? orderedCommands : files;
+  const mentionChoices = useMemo(() => (trigger?.kind === "file" ? rankMentionChoices(trigger.query, agents, files) : []), [agents, files, trigger]);
+  const choices: readonly (SlashCommand | MentionChoice)[] = trigger?.kind === "slash" ? orderedCommands : mentionChoices;
   const menuOpen = !menuDismissed && trigger !== null && choices.length > 0;
   // clamped as the list is drawn, not by an effect after it: a Tab or Enter typed before that
   // effect's render found no row at the old index and did nothing
   const choiceIds = choices.map((choice) => trigger?.kind === "slash"
     ? `${(choice as SlashCommand).source}:${(choice as SlashCommand).name}`
-    : choice as string);
+    : mentionChoiceId(choice as MentionChoice));
   const activeItemId = resolveComposerMenuActiveItemId({
     items: choiceIds.map((id) => ({ id })),
     highlightedItemId: searchKey === null ? null : highlightedItemId.current,
@@ -759,8 +767,8 @@ export function Composer({
   }, [placeWaitingMentions, text]);
 
   const selectCompletion = useCallback(
-    (choice: SlashCommand | string, currentTrigger: ActiveTrigger) => {
-      const replacement = currentTrigger.kind === "slash" ? `${(choice as SlashCommand).trigger ?? "/"}${(choice as SlashCommand).name} ` : `@${choice as string} `;
+    (choice: SlashCommand | MentionChoice, currentTrigger: ActiveTrigger) => {
+      const replacement = currentTrigger.kind === "slash" ? `${(choice as SlashCommand).trigger ?? "/"}${(choice as SlashCommand).name} ` : `@${mentionText(choice as MentionChoice)} `;
       const completed = applyCompletion(text, currentTrigger, replacement);
       setTextAndCaret(completed.text, completed.caret);
       setMenuDismissed(true);
@@ -1167,7 +1175,7 @@ export function Composer({
           onKeyDown={onResizeKey}
         />
         {menuOpen && trigger && (
-          <div id={menuId} className="menu composer-menu" role="listbox" aria-label={t(trigger.kind === "slash" ? "Slash commands" : "Files")}>
+          <div id={menuId} className="menu composer-menu" role="listbox" aria-label={t(trigger.kind === "slash" ? "Slash commands" : "Agents and files")}>
             {trigger.kind === "slash" ? (
               (() => {
                 const row = (command: SlashCommand, withSource: boolean) => {
@@ -1201,23 +1209,41 @@ export function Composer({
                 });
               })()
             ) : (
-              <div className="composer-menu-group">
-                <div className="menu-heading">{t("Files")}</div>
-                {files.map((file, index) => (
-                  <button
-                    id={`${menuId}-${index}`}
-                    key={file}
-                    type="button"
-                    className="menu-item"
-                    role="option"
-                    aria-selected={index === selectedIndex}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => selectCompletion(file, trigger)}
-                  >
-                    <span className="menu-item-main">{file}</span>
-                  </button>
-                ))}
-              </div>
+              <>
+                {(["agent", "file"] as const).map((kind) => {
+                  const rows = mentionChoices.filter((choice) => choice.kind === kind);
+                  if (rows.length === 0) return null;
+                  return (
+                    <div className="composer-menu-group" key={kind}>
+                      <div className="menu-heading">{t(kind === "agent" ? "Agents" : "Files")}</div>
+                      {rows.map((choice) => {
+                        const index = mentionChoices.indexOf(choice);
+                        return (
+                          <button
+                            id={`${menuId}-${index}`}
+                            key={mentionChoiceId(choice)}
+                            type="button"
+                            className="menu-item"
+                            role="option"
+                            aria-selected={index === selectedIndex}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => selectCompletion(choice, trigger)}
+                          >
+                            {choice.kind === "agent" ? (
+                              <>
+                                <span className="menu-item-main">@{choice.agent.name}</span>
+                                {choice.agent.description && <span className="menu-item-hint">{choice.agent.description}</span>}
+                              </>
+                            ) : (
+                              <span className="menu-item-main">{choice.path}</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </>
             )}
           </div>
         )}
@@ -1310,7 +1336,7 @@ export function Composer({
             <Plus aria-hidden="true" />
           </button>
           {dictation.shown && <MicButton dictation={dictation} />}
-          <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
+          <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} pi={agent === "pi"} waiting={backgroundWait} status={agentStatus} plan={plan} />
         </div>
         {/* between the two control groups of the card's last row. The agent's name, its separator and the
             state word are read, not drawn: the mark and the header name the agent, and Stop, the live row and
@@ -1334,6 +1360,7 @@ export function Composer({
                 {/* behind a name the id as received is still read; a touch cannot reach the title */}
                 {model?.named && <span className="composer-model-id visually-hidden">{metadata?.model}</span>}
                 {/* no level recorded: nothing is drawn for it, no dot and no dash; the sentence is still read */}
+                {metadata?.mode && <span className="composer-mode" title={t("Mode: {mode}", { mode: metadata.mode })}>{metadata.mode}</span>}
                 <span className={`composer-reasoning${metadata?.reasoning_effort ? "" : " visually-hidden"}`} title={metadata?.reasoning_effort ? t("Reasoning effort: {effort}", { effort: metadata.reasoning_effort }) : t("Reasoning effort not available")}>
                   <span className="composer-reasoning-full visually-hidden">{t("Reasoning {effort}", { effort: metadata?.reasoning_effort ?? "—" })}</span>
                   {metadata?.reasoning_effort && <>

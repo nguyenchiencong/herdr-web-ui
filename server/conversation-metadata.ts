@@ -44,7 +44,7 @@ export function parseConversationMetadata(text: string, source: ConversationResp
   for (const line of text.split("\n")) {
     let entry: RecordValue;
     try { entry = record(JSON.parse(line)); } catch { continue; }
-    if (isContextClear(entry, source)) { metadata.model = null; metadata.reasoning_effort = null; piProvider = null; delete metadata.context; continue; }
+    if (isContextClear(entry, source)) { metadata.model = null; metadata.reasoning_effort = null; piProvider = null; delete metadata.context; delete metadata.mode; continue; }
     if (source === "grok-transcript") {
       const update = record(record(entry.params).update);
       if (entry.method === "session/update" && update.sessionUpdate === "user_message_chunk") {
@@ -72,6 +72,7 @@ export function parseConversationMetadata(text: string, source: ConversationResp
     } else if (source === "omp-transcript" || source === "omo-transcript" || source === "gjc-transcript" || source === "pi-transcript") {
       if (entry.type === "model_change") { metadata.model = label(entry.modelId); piProvider = label(entry.provider); }
       if (entry.type === "thinking_level_change") metadata.reasoning_effort = label(entry.thinkingLevel);
+      if (source === "pi-transcript" && entry.type === "custom" && entry.customType === "pi-modes-state") metadata.mode = label(record(entry.data).name);
       const message = piMessage(entry) ?? {};
       // a turn answers at whatever model it ran at, and that is the one the window belongs to
       if (entry.type === "message" && message.role === "assistant" && label(message.model)) {

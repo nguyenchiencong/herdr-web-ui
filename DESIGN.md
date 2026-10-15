@@ -518,7 +518,8 @@ One set for both themes: the card is island black wherever it shows.
 ### Badge (`.badge`)
 - Agent states read **READY**, **RUN**, **INPUT**, **DONE**; unknown reads **—**. **BG** is a pane
   whose turn ended while work it started still runs in the background (`background_wait`): it
-  stands in for DONE or READY until that work's turn ends.
+  stands in for DONE or READY until that work's turn ends. While it holds, its sidebar title reads
+  **Background work running**, and so does the chip while a task runs.
 - Idle is elevated/dim; working, blocked and done use their own tint and text. RUN carries a small
   breathing dot before the word; the word itself never fades. BG takes the working tint and text,
   holding still; a tab's dot for it is a working-coloured ring.
@@ -910,6 +911,9 @@ One set for both themes: the card is island black wherever it shows.
   text button in the regular weight beside it. Otherwise the answer keeps two labelled buttons,
   glyph + MD and glyph + TXT; where the primary pointer is coarse each is a `--touch-target` target on a
   one-line row, as is a user turn's copy, and a skill list under a user turn clears that target.
+- A prompt that pi's project context follows shows a `Project context` chip under it (`.chat-skills`,
+  `.chat-skill`): its doc and token counts, opened to the context text. The text is cut at 16 000
+  characters, and the opened chip says so.
 - Markdown supports headings, lists (a task item `- [x]` / `- [ ]` shows a checked or empty box in
   place of its bullet, not clickable), links, quotes, tables, inline/fenced code and code-copy
   actions.
@@ -956,17 +960,32 @@ One set for both themes: the card is island black wherever it shows.
   agent is blocked, by the pane's status and not by whether a prompt card was parsed) over
   one-line rows on the header's own left edge, which is the prose edge too (the hover plate
   overhangs it by `--space-1`).
+- The header's counts name subagent calls, searches and web requests under their own words
+  (`2 subagents · 1 command`, `1 search`, `1 web request`); a profiled call counts under its profile's
+  category (`lib/toolProfiles.ts`).
 - A row is caret + verb + object: `▸ Read src/metrics.ts`, `▸ Edited src/pages/Reports.tsx`,
-  `▸ Ran pnpm test`. The caret is always shown; there is no per-tool icon and no separator. The
-  verb (Read, Edited, Wrote, Ran; `lib/toolVerbs.ts`, by exact tool id) is in the interface face,
+  `▸ Ran pnpm test`. The caret is always shown. A tool in the profile table (`lib/toolProfiles.ts`:
+  subagents, background tasks, code, searches, classifier calls) shows its icon (`--text-dim`, before
+  the label) and its label in the verb's face in place of the verb, then its object, which is what its
+  summary argument says (`▸ Subagent Find where the task records live`, `▸ Search TODO`); there is no
+  separator. The verb (Read, Edited, Wrote, Ran; `lib/toolVerbs.ts`, by exact tool id) is in the
+  interface face,
   `--fs-sm`, `--text-dim`; the object is mono `--fs-xs`. A tool the table does not know, a call
   with no object, or a call summed up by something other than its own command or path (omp's
   `intent`: `bash Checking ports`) keeps its id in mono `--text` in the verb's place. A failed row
   turns the verb or id `--status-blocked` and adds the word "failed": after the object under a
   verb (`▸ Ran pnpm test [failed]`), after the id otherwise.
-- A row expands to the typed input (command, diff, file, checklist, raw) and an Output pane. Under
+- A row expands to the typed input (command, diff, file, checklist, or the arguments as fields: a
+  short value on its key's line, a multi-line or long value verbatim in its own block and not
+  JSON-escaped, `code`, `expression` and `script` highlighted as JavaScript) and an Output pane. A file
+  edit shows the file's name and a diff per replaced span. Under
   a verb the tool's own id (`exec`, `Bash`, `apply_patch`) is the first line of that detail
   (`.work-row-tool`, mono, dim) and the row's title.
+- A result reads as Markdown when its output looks like Markdown (a heading, a fence, a table, two list
+  items) and its call is not a shell, a file read, an edit or a plain-text profile (`lib/toolResults.ts`).
+  A dim meta line above the output carries its status, duration, tokens, tool calls and turns when its
+  structured result has them. A `jev_decide` answer table (each question, its answer, and a `--accent`
+  meter for its confidence) shows when `details.answers` has the classifier's shape, whatever the tool, on a pi transcript (the server sets tool `details` only there).
 - Mid-work narration sits between rows. While the turn runs it is the agent's voice: answer prose
   (`--text`, `--fs-chat` on `--lh-prose`) on the prose edge. Once the turn settles it is a quiet
   row again: `--text-dim`, `--fs-sm`.
@@ -1000,11 +1019,15 @@ One set for both themes: the card is island black wherever it shows.
 - The chip opens one list above the card: a **Plan** heading with `N of M done`, the steps in wave
   order (a status glyph, the name, what a running step does now, then a dim state · time · teammate
   line; a waiting step's name is dim), then a **Background tasks** heading over the tasks list when
-  the pane has tasks to show. The steps are read again every few seconds while the list is open.
+  the pane has tasks to show. A pi pane's background command row shows its exit code, and **Show
+  output** (`.bg-task-output-toggle`) opens the end of its log in a box that scrolls (`.bg-task-output`).
+  The steps are read again every few seconds while the list is open.
 
 ### Background tasks ended (`.chat-task-results`)
-- Where OmO reports background tasks that ended, or a Claude Code subagent ends (its
-  `<task-notification>`, drawn once however many records carry it), the transcript shows one `--bg-elevated` card
+- Where OmO reports background tasks that ended, a Claude Code subagent ends (its
+  `<task-notification>`, drawn once however many records carry it), or a pi subagent or background
+  command ends (its `subagent-notification` or `background-task-notification`, with its numbers
+  from its details), the transcript shows one `--bg-elevated` card
   (hairline edge, `--radius-lg`) on the prose column: a dim `--fs-xs` line with the layers icon,
   "2 background tasks ended" and the time, then one hairline-separated row per task.
 - A row is the status icon (`--status-done` check, `--status-blocked` x, dim slash for
@@ -1012,6 +1035,10 @@ One set for both themes: the card is island black wherever it shows.
   model · duration · turns · tool calls · tokens), and the status word at the right in the
   icon's color, with the skill caret. Opened, the task's answer renders as Markdown, indented to
   the title, bounded to 60vh.
+- On a pi transcript, a task that ends while its turn is still at work is a task row inside that
+  turn's work block, the same row as in the card. A runtime notice that arrives then is a caret row,
+  labelled as the notice shows and opened to its text. The turn stays one block; the card above is
+  drawn only for a task that starts a turn of its own.
 
 ### Prompt card (`.prompt-card`)
 - Appears in chat while the agent is blocked and the visible pane contains a supported Claude, omp,
@@ -1142,7 +1169,10 @@ One set for both themes: the card is island black wherever it shows.
   `--space-3` inline padding, `--space-2` between its parts. The model is in `--text` at
   `--fw-medium`; the level follows a middle dot in `--text-dim`, as the agent's own words with
   only the first letter drawn as a capital (`::first-letter`, the text is not rewritten); a pane
-  that records no level draws no dot and no dash, only the name. On the
+  that records no level draws no dot and no dash, only the name. A pi session that records a mode
+  (`pi-modes-state`) shows it after the name (`.composer-mode`, `--text-dim`, `--fs-xs`, at most
+  `12ch`, its whole name in its `title`); it is the first word to give way, shrinking to nothing
+  before a letter of the model's name is cut, and it steps out with the label. On the
   fill the ring's track is `--border-strong`; a ring left bare on the card keeps `--border`.
   No part carries a chevron: herdr owns the agent, so none of them opens a menu. It is display only: a `span` with no role, no
   focus, no hover or pressed state, no pointer cursor and no chevron; the ring inside it is the
@@ -1256,7 +1286,12 @@ One set for both themes: the card is island black wherever it shows.
 - At `480px` and below a held row is its text, `Send now` and a `--touch-target` X whose name is
   still `Discard`.
 - `/` completions come from `GET /api/pane/commands` and group built-in, user and project commands;
-  `@` completions query `GET /api/pane/files`. Arrow keys navigate, Enter/Tab accepts, Escape closes.
+  `@` completions query `GET /api/pane/files`. In a pi pane, the same commands answer also lists the agents a
+  message can mention (`agents`: `<agent dir>/agents/*.md`, and a project's `.pi/agents` and `.agents/agents`
+  only where pi's `trust.json` trusts it); the `@` menu shows up to eight that match the query under an
+  **Agents** heading (a name that starts with it, then a word of the name, then one containing it), each as
+  `@name` with its front matter's description, above the **Files** group, and completing one inserts
+  `@name `. Arrow keys navigate, Enter/Tab accepts, Escape closes.
 - Paste, picker or drag/drop attaches up to 100 files per action; the message box names how many it left out.
   An image is stored as a paste, any other file under its own sanitised name. Each uploads through `POST /api/pane/image`, three at a time
   across all picks, and puts a removable editable `@path` mention at the start of the message (after

@@ -1,7 +1,7 @@
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, Target,
+  ArrowDown, BookOpen, Bot, Braces, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleStop, CircleX, Copy, FileText, Gauge, Hourglass, Image as ImageIcon, Layers, LockKeyhole, MessageSquareText, Route, Search, Target,
   type LucideProps,
 } from "lucide-react";
 
@@ -23,6 +23,8 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { appendChatRowSlots, createChatRowSlots, prependChatRowSlots } from "../lib/chatRows.ts";
 import { ChatDetails, ChatRowMemoryContext, useChatRowToggle, type ChatRowMemory } from "../lib/chatRowState.tsx";
 import { turnRevision } from "../lib/turnRevision.ts";
+import { settingChanges, type SettingChange } from "../lib/sessionMarkers.ts";
+import { modelLabel } from "../lib/modelName.ts";
 import { useWholeOutput as useScopedOutput } from "../lib/useWholeOutput.ts";
 import { turnSkills } from "../lib/skillActivity.ts";
 import { ApiError } from "../lib/api.ts";
@@ -31,6 +33,8 @@ import { attachmentFileName, mentionFileName, type GalleryImage } from "../lib/i
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.ts";
 import { isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, splitTurn, workFailed, workStartsOpen, workSummary, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
+import { editPairs, rowSummaries, toolProfile, type ToolIcon } from "../lib/toolProfiles.ts";
+import { classifierAnswers, rendersAsMarkdown, resultMeta, type ClassifierAnswer } from "../lib/toolResults.ts";
 import { phaseRows, planRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
 import { isTodoTool, parseTodoAnswer, todoCallSummary, type TodoItem, type TodoStatus } from "../lib/todos.ts";
 import { formatGoalTime, turnGoal, type GoalState, type GoalStatus } from "../lib/goals.ts";
@@ -45,6 +49,7 @@ import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { linkFilePaths } from "./FilePathLink.tsx";
+import { HighlightedCode } from "./HighlightedCode.tsx";
 import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
@@ -192,6 +197,11 @@ function ChecklistView({ rows }: { rows: ChecklistRow[] }) {
 const TODO_ICONS: Record<TodoStatus, ComponentType<LucideProps>> = {
   completed: CircleCheck, in_progress: CircleDot, pending: Circle, blocked: CircleAlert, dropped: CircleSlash,
 };
+/** The glyph a profiled tool's row shows, by its profile's icon (lib/toolProfiles.ts). */
+const PROFILE_ICONS: Record<ToolIcon, ComponentType<LucideProps>> = {
+  subagent: Bot, steer: Route, result: FileText, background: Hourglass, stop: CircleStop, code: Braces,
+  classify: Gauge, claim: LockKeyhole, message: MessageSquareText, search: Search, image: ImageIcon,
+};
 const TODO_LABELS: Record<TodoStatus, string> = {
   completed: "done", in_progress: "in progress", pending: "to do", blocked: "blocked", dropped: "dropped",
 };
@@ -259,6 +269,63 @@ function PatchView({ patch }: { patch: string }) {
   </div>)}</div>;
 }
 
+/** Argument names whose value is code: drawn highlighted as JavaScript (a codemode script, an expression). */
+const CODE_ARGUMENTS = new Set(["code", "expression", "script"]);
+/** A string argument longer than this, or with a line break, is a block of its own rather than the text of its field. */
+const ARGUMENT_LINE = 80;
+/** Nested arguments deeper than this are JSON, so a malformed input cannot nest the list out of the row. */
+const ARGUMENT_DEPTH = 4;
+
+/**
+ * A call's arguments as fields: a key, then its value. A short value sits on the key's line; a long
+ * one, or one with a line break, is a block of its own, verbatim and not JSON-escaped. Code is
+ * highlighted, and a nested object is a nested list.
+ */
+function ArgumentList({ args, depth }: { args: Record<string, unknown>; depth: number }) {
+  return <dl className={depth === 0 ? "chat-args" : "chat-args chat-args-nested"}>{Object.entries(args).map(([name, value]) => <Fragment key={name}>
+    <dt>{name}</dt>
+    <dd><ArgumentValue name={name} value={value} depth={depth} /></dd>
+  </Fragment>)}</dl>;
+}
+
+function ArgumentValue({ name, value, depth }: { name: string; value: unknown; depth: number }) {
+  const open = useContext(OpenFileContext);
+  if (typeof value === "string") {
+    if (value === "") return <span className="chat-args-empty">{'""'}</span>;
+    if (CODE_ARGUMENTS.has(name)) return <HighlightedCode code={value} language="js" open={open} />;
+    if (value.includes("\n") || value.length > ARGUMENT_LINE) return <pre className="chat-args-text">{value}</pre>;
+    return <>{value}</>;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <>[]</>;
+    const scalars = value.every((item) => item === null || typeof item === "number" || typeof item === "boolean" || (typeof item === "string" && !item.includes("\n") && item.length <= ARGUMENT_LINE));
+    if (scalars) return <>{value.map((item) => String(item)).join(", ")}</>;
+    return <ol className="chat-args-list">{value.map((item, index) => <li key={index}><ArgumentValue name="" value={item} depth={depth + 1} /></li>)}</ol>;
+  }
+  if (value !== null && typeof value === "object") {
+    if (depth >= ARGUMENT_DEPTH) return <pre className="chat-args-text">{JSON.stringify(value, null, 2)}</pre>;
+    return <ArgumentList args={value as Record<string, unknown>} depth={depth + 1} />;
+  }
+  return <>{String(value)}</>;
+}
+
+/** jev_decide's answers as a table: each question, its answer, and how sure the classifier was. */
+function ClassifierTable({ answers }: { answers: ClassifierAnswer[] }) {
+  const t = useT();
+  return <table className="chat-answers" aria-label={t("Classifier answers")}>
+    <thead><tr><th scope="col">{t("Question")}</th><th scope="col">{t("Answer")}</th><th scope="col">{t("Confidence")}</th></tr></thead>
+    <tbody>{answers.map((answer) => {
+      const percent = answer.confidence === null ? null : Math.round(Math.min(1, Math.max(0, answer.confidence)) * 100);
+      const value = typeof answer.value === "number" ? (Number.isInteger(answer.value) ? String(answer.value) : answer.value.toFixed(2)) : answer.value;
+      return <tr key={answer.question}>
+        <th scope="row" className="chat-answer-question">{answer.question}</th>
+        <td>{value}</td>
+        <td>{percent === null ? null : <span className="chat-answer-confidence"><span className="chat-answer-meter" aria-hidden="true"><span className="chat-answer-fill" style={{ width: `${percent}%` }} /></span>{`${percent}%`}</span>}</td>
+      </tr>;
+    })}</tbody>
+  </table>;
+}
+
 function ToolInputView({ part }: { part: ToolPartType }) {
   const open = useContext(OpenFileContext);
   const t = useT();
@@ -281,14 +348,11 @@ function ToolInputView({ part }: { part: ToolPartType }) {
   const str = (key: string): string | undefined => typeof parsed[key] === "string" ? parsed[key] : undefined;
   const command = str("command") ?? str("cmd");
   if (command !== undefined) return <div className="chat-tool-io"><pre>{linkFilePaths(command, open)}</pre>{(str("cwd") ?? str("description")) !== undefined && <p className="chat-tool-io-meta">{str("cwd") ?? str("description")}</p>}</div>;
-  const oldString = str("old_string");
-  const newString = str("new_string");
-  if (oldString !== undefined || newString !== undefined) return <div className="chat-tool-io">{str("file_path") !== undefined && <ToolFile path={str("file_path")!} />}<EditDiff before={oldString ?? ""} after={newString ?? ""} /></div>;
-  // several edits to one file: each its own diff, in order
-  if (Array.isArray(parsed["edits"]) && parsed["edits"].every((item) => item !== null && typeof item === "object")) {
-    const edits = parsed["edits"] as Array<Record<string, unknown>>;
-    return <div className="chat-tool-io">{str("file_path") !== undefined && <ToolFile path={str("file_path")!} />}{edits.map((item, index) =>
-      <EditDiff key={index} before={typeof item["old_string"] === "string" ? item["old_string"] : ""} after={typeof item["new_string"] === "string" ? item["new_string"] : ""} />)}</div>;
+  // a file edit: each replaced span its own diff under the file's header (Claude's old_string and new_string, pi's oldText and newText, one or several in an edits list)
+  const pairs = editPairs(parsed);
+  if (pairs !== null) {
+    const file = str("file_path") ?? str("path");
+    return <div className="chat-tool-io">{file !== undefined && <ToolFile path={file} />}{pairs.map((pair, index) => <EditDiff key={index} before={pair.before} after={pair.after} />)}</div>;
   }
   // SendUserFile: the files it names, openable where the viewer already opens any other path
   const sendUserFile = sendUserFileCall(parsed);
@@ -309,7 +373,8 @@ function ToolInputView({ part }: { part: ToolPartType }) {
       if (rows.length > 0) return <ChecklistView rows={rows} />;
     }
   }
-  return <pre className="chat-tool-io">{part.input}</pre>;
+  // the arguments as fields; a call with none reads as its input
+  return Object.keys(parsed).length > 0 ? <div className="chat-tool-io chat-tool-args"><ArgumentList args={parsed} depth={0} /></div> : <pre className="chat-tool-io">{part.input}</pre>;
 }
 
 /** A cut output's rest, fetched when asked for: the page carries the first few thousand characters. */
@@ -366,29 +431,37 @@ function ToolImages({ paneId, part }: { paneId: string; part: ToolPartType }) {
  * verb table knows reads as verb + object, and its id moves to the title and the opened detail;
  * any other keeps its id in front, as the agent names it.
  */
-function WorkRow({ paneId, part, stateKey }: { paneId: string; part: ToolPartType; stateKey: string }) {
+function WorkRow({ paneId, part, stateKey, rowText }: { paneId: string; part: ToolPartType; stateKey: string; rowText: string }) {
   const t = useT();
   // the files an output names open from it ("saved /tmp/shot/t0.png")
   const openFile = useContext(OpenFileContext);
   const [chosen, setOpen] = useChatRowToggle(stateKey, false);
   const open = chosen === true;
   const whole = useWholeOutput(part.output_ref);
-  const summary = part.arguments_omitted ? t("Arguments omitted (too large)") : todoCallSummary(part) ?? part.summary;
+  const summary = part.arguments_omitted ? t("Arguments omitted (too large)") : todoCallSummary(part) ?? rowText;
   // reads the call's input: once per call, not on every poll of the transcript
   const { verb, narration } = useMemo(() => workRowLabel({ name: part.name, input: part.input }, summary), [part.name, part.input, summary]);
   // the list is the answer of a todo call: its raw text would say it twice
   const output = isTodoTool(part.name) && parseTodoAnswer(part.output) !== null ? "" : whole.text ?? part.output;
+  // a profiled tool shows its icon before its label; a result shows its meta line, a classifier's table, and Markdown when it reads as such
+  const profile = toolProfile(part.name);
+  const Icon = profile === null ? null : PROFILE_ICONS[profile.icon];
+  const answers = classifierAnswers(part.details);
+  const meta = resultMeta(part.details);
+  const markdown = rendersAsMarkdown(part, output);
   return <div className={`work-row${part.error ? " is-error" : ""}`}>
     <button type="button" className="work-row-head" aria-expanded={open} title={narration || verb !== null ? `${part.name} · ${summary}` : undefined} onClick={() => setOpen(!open)}>
       <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
-      {!narration && (verb !== null ? <span className="work-row-name is-verb">{t(verb)}</span> : <span className="work-row-name">{part.name}</span>)}
+      {!narration && (verb !== null ? <span className="work-row-name is-verb">{Icon !== null && <Icon className="work-row-icon" aria-hidden="true" />}{t(verb)}</span> : <span className="work-row-name">{part.name}</span>)}
+      {/* a narrated row hides the tool id: a screen reader hears its kind before the sentence, as in "Bash: Run the unit tests" */}
+      {narration && <span className="visually-hidden">{part.name}: </span>}
       {/* the spaces are for a screen reader: the row is read as words, not "Ranbun test" */}
       {!narration && part.error && verb === null && <>{" "}<span className="work-row-failed">{t("failed")}</span></>}
       {summary.length > 0 && summary !== part.name && <>{" "}<span className="work-row-summary">{summary}</span></>}
       {/* after a verb, or the agent's own sentence, the word follows it: "Ran pnpm test failed", not "Ran failed pnpm test" */}
       {part.error && (narration || verb !== null) && <>{" "}<span className="work-row-failed">{t("failed")}</span></>}
     </button>
-    {open && <div className="work-row-detail">{verb !== null && <p className="work-row-tool">{part.name}</p>}<ToolInputView part={part} /><ToolImages paneId={paneId} part={part} />{output.length > 0 && <section className="chat-tool-output"><h4>{t(part.error ? "Error" : "Output")}</h4><pre className={`chat-tool-io${whole.text !== null ? " is-whole" : ""}`}>{linkFilePaths(output, openFile)}</pre>
+    {open && <div className="work-row-detail">{verb !== null && <p className="work-row-tool">{part.name}</p>}<ToolInputView part={part} /><ToolImages paneId={paneId} part={part} />{answers !== null && <ClassifierTable answers={answers} />}{meta.length > 0 && <p className="chat-tool-meta">{meta}</p>}{output.length > 0 && <section className="chat-tool-output"><h4>{t(part.error ? "Error" : "Output")}</h4>{markdown ? <div className="chat-tool-markdown"><Markdown>{output}</Markdown></div> : <pre className={`chat-tool-io${whole.text !== null ? " is-whole" : ""}`}>{linkFilePaths(output, openFile)}</pre>}
       {part.output_ref !== undefined && whole.text === null && <button type="button" className="btn btn-ghost chat-tool-more" disabled={whole.state === "loading"} onClick={whole.load}>
         {t(whole.state === "loading" ? "Loading the whole output…" : whole.state === "failed" ? "Couldn't load the whole output — retry" : "Show the whole output ({size} characters)", { size: formatTokens(part.output_size ?? 0) })}
       </button>}</section>}</div>}
@@ -408,12 +481,26 @@ function ThinkingRow({ text, stateKey }: { text: string; stateKey: string }) {
   </div>;
 }
 
+/** A runtime notice that arrived while its turn was at work: its label, and its text on request. */
+function WorkNoticeRow({ notice, stateKey }: { notice: Extract<ConversationPart, { kind: "notice" }>; stateKey: string }) {
+  const t = useT();
+  const [chosen, setOpen] = useChatRowToggle(stateKey, false);
+  const open = chosen === true;
+  return <div className="work-row work-row-notice">
+    <button type="button" className="work-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
+      <span className="work-row-name">{noticeLabel(t, notice)}</span>
+    </button>
+    {open && <pre className="work-row-detail chat-notice-text">{notice.text}</pre>}
+  </div>;
+}
+
 /**
  * Everything the agent did on the way — tool calls, reasoning and the narration
  * between them — under one header ("Worked for 7s · 1 edit"). Rows stay one line
  * each until opened; the narration between them is answer prose while the turn runs, dim after.
  */
-function WorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, showThinking }: { paneId: string; parts: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; showThinking: boolean }) {
+export function WorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, showThinking }: { paneId: string; parts: ConversationPart[]; duration: string | null; live: boolean; waiting: boolean; defaultOpen: boolean; showThinking: boolean }) {
   const t = useT();
   const [chosenOpen, setOpen] = useChatRowToggle("work", null);
   const open = chosenOpen ?? defaultOpen;
@@ -421,6 +508,8 @@ function WorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, sh
   // must not take the rows from under the reader's focus or close the row they opened
   const keepOpen = () => { if (chosenOpen === null) setOpen(true); };
   const visible = parts.filter((part) => part.kind !== "skill" && (showThinking || part.kind !== "thinking"));
+  // each row's summary, read once for the turn: a reference resolves against the calls before it (lib/toolProfiles.ts)
+  const rowTexts = useMemo(() => rowSummaries(parts.filter((part): part is ToolPartType => part.kind === "tool")), [parts]);
   if (visible.length === 0) return null;
   const summary = workSummary(parts);
   const failed = workFailed(parts);
@@ -439,7 +528,9 @@ function WorkBlockView({ paneId, parts, duration, live, waiting, defaultOpen, sh
       <div className="work-block-rows" onFocus={keepOpen} onClick={keepOpen}>{visible.map((part, index) =>
         part.kind === "thinking" ? <ThinkingRow key={index} stateKey={`thinking:${parts.indexOf(part)}`} text={part.text} />
           : part.kind === "text" ? <div key={index} className="work-narration"><Markdown>{part.text}</Markdown></div>
-            : part.kind === "tool" ? <WorkRow key={index} stateKey={`tool:${parts.indexOf(part)}`} paneId={paneId} part={part} /> : null)}
+            : part.kind === "tool" ? <WorkRow key={index} stateKey={`tool:${parts.indexOf(part)}`} paneId={paneId} part={part} rowText={rowTexts.get(part) ?? part.summary} />
+              : part.kind === "notice" ? <WorkNoticeRow key={index} stateKey={`notice:${parts.indexOf(part)}`} notice={part} />
+                : part.kind === "task_result" ? <div key={index}>{part.tasks.map((task) => <TaskResultRow key={task.id} task={task} />)}</div> : null)}
       </div>
     </AnimatedHeight>
   </section>;
@@ -461,6 +552,27 @@ function SkillActivityList({ parts }: { parts: ConversationPart[] }) {
         {skill.path && <code>{skill.path}</code>}
       </div>
     </ChatDetails>)}
+  </div>;
+}
+
+/** Project context a harness injected under this prompt: a chip with its counts, opened to its text. */
+function ContextChips({ parts }: { parts: ConversationPart[] }) {
+  const t = useT();
+  const contexts = parts.filter((part): part is Extract<ConversationPart, { kind: "context" }> => part.kind === "context");
+  if (contexts.length === 0) return null;
+  return <div className="chat-skills" role="group" aria-label={t("Project context")}>
+    {contexts.map((context, index) => {
+      const counts = [
+        context.docs === undefined ? null : t(context.docs === 1 ? "{n} doc" : "{n} docs", { n: context.docs }),
+        context.tokens === undefined ? null : t("{n} tokens", { n: formatTokens(context.tokens) }),
+      ].filter((item) => item !== null).join(" · ");
+      return <ChatDetails key={index} memoryKey={`context:${index}`} className="chat-skill chat-context">
+        <summary><Layers aria-hidden="true" /><span className="chat-skill-name">{t("Project context")}</span>{counts.length > 0 && <span className="chat-skill-status">{counts}</span>}<ChevronDown className="chat-skill-caret" aria-hidden="true" /></summary>
+        <div className="chat-skill-detail"><pre className="chat-compact-text chat-notice-text">{context.text}</pre>
+          {context.text_cut === true && <p>{t("This is the first part of the context")}</p>}
+        </div>
+      </ChatDetails>;
+    })}
   </div>;
 }
 
@@ -598,13 +710,49 @@ function TaskResultRow({ task }: { task: OmoTaskResult }) {
 
 /** what a runtime notice was: a background result by name, anything else by its own first line */
 function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPart, { kind: "notice" }>): string {
+  if (notice.label !== undefined) return notice.label;
   if (notice.source === undefined || notice.source === "async-result") return t("Background result delivered");
   if (notice.source.startsWith("peer:")) {
     const name = notice.source.slice(5);
     return name ? t("Message from another session: {name}", { name }) : t("Message from another session");
   }
-  const first = notice.text.split("\n").find((line) => line.trim().length > 0)?.trim() ?? notice.source;
-  return first.length > 96 ? `${first.slice(0, 95)}…` : first;
+  // an envelope's tag or a heading is chrome, never a label: a screen reader would read the raw tag, so the runtime's name stands in
+  const first = notice.text.split("\n").find((line) => line.trim().length > 0)?.trim() ?? "";
+  const label = /^[<#]/.test(first) || first === "" ? notice.source.replace(/[:_-]+/g, " ").trim() || t("Background result delivered") : first;
+  return label.length > 96 ? `${label.slice(0, 95)}…` : label;
+}
+
+/** The settings a pi session changed since the turn before this one, drawn as thin markers above it. */
+function SettingMarks({ changes }: { changes: SettingChange[] }) {
+  const t = useT();
+  return <div className="chat-setting-marks">
+    {changes.map((change) => <span key={change.key} className="chat-setting-mark">{change.key === "model" ? t("Model → {model}", { model: modelLabel(change.value).text })
+      : change.key === "reasoning_effort" ? t("Thinking → {level}", { level: change.value })
+        : t("Mode → {mode}", { mode: change.value })}</span>)}
+  </div>;
+}
+
+/**
+ * A compaction: the newest part of its summary, the summary it folded in on request (rendered only then), the context pi
+ * recorded it folded, and a note when the chat keeps only the start of the summary.
+ */
+export function CompactCard({ compact, time }: { compact: Extract<ConversationPart, { kind: "compact" }>; time: ReactNode }) {
+  const t = useT();
+  // kept with the row, as its disclosure is: scrolled out of the list and back, the earlier summary stays as the reader left it
+  const [earlierChosen, setEarlierOpen] = useChatRowToggle("compact-earlier", false);
+  const earlierOpen = earlierChosen === true;
+  const earlierId = useId();
+  return <ChatDetails memoryKey="compact" className="chat-compact">
+    <summary>{t("Conversation compacted")}{compact.tokens !== undefined && <> · {t("{n} tokens", { n: formatTokens(compact.tokens) })}</>}{time !== null && <> · {time}</>}</summary>
+    <div className="chat-compact-text"><Markdown>{compact.text}</Markdown></div>
+    {compact.earlier !== undefined && <>
+      <button type="button" className="chat-compact-earlier" aria-expanded={earlierOpen} aria-controls={earlierId} onClick={() => setEarlierOpen(!earlierOpen)}>
+        {earlierOpen ? t("Hide earlier summary") : t("Show earlier summary")}
+      </button>
+      {earlierOpen && <div id={earlierId} className="chat-compact-text"><Markdown>{compact.earlier}</Markdown></div>}
+    </>}
+    {compact.text_cut === true && <p>{t("This is the first part of the summary")}</p>}
+  </ChatDetails>;
 }
 
 // a turn that did not change keeps its object across polls: skip re-rendering it
@@ -616,14 +764,10 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
   const copied = (ok: boolean): void => setCopyFailed(!ok);
   const time = turn.ts === null ? null : <TurnTime ts={turn.ts} />;
   const compact = turn.parts.find((part): part is Extract<ConversationPart, { kind: "compact" }> => part.kind === "compact");
-  if (compact !== undefined) {
-    return <ChatDetails memoryKey="compact" className="chat-compact">
-      <summary>{t("Conversation compacted")}{time !== null && <> · {time}</>}</summary>
-      <div className="chat-compact-text"><Markdown>{compact.text}</Markdown></div>
-    </ChatDetails>;
-  }
+  if (compact !== undefined) return <CompactCard compact={compact} time={time} />;
   // OmO's background tasks reported back: a card of what ended, each result on request
-  const ended = turn.parts.find((part): part is Extract<ConversationPart, { kind: "task_result" }> => part.kind === "task_result");
+  // a card in the user's seat; one written while the turn was at work is a row of its work block
+  const ended = turn.role === "user" ? turn.parts.find((part): part is Extract<ConversationPart, { kind: "task_result" }> => part.kind === "task_result") : undefined;
   if (ended !== undefined) {
     const heading = ended.tasks.length === 1 ? t("Background task ended") : t("{n} background tasks ended", { n: ended.tasks.length });
     return <section className="chat-task-results" aria-label={heading}>
@@ -632,7 +776,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
     </section>;
   }
   // the runtime spoke, not the user: a quiet divider like a compaction, the text on request
-  const notice = turn.parts.find((part): part is Extract<ConversationPart, { kind: "notice" }> => part.kind === "notice");
+  const notice = turn.role === "user" ? turn.parts.find((part): part is Extract<ConversationPart, { kind: "notice" }> => part.kind === "notice") : undefined;
   if (notice !== undefined) {
     return <ChatDetails memoryKey="notice" className="chat-compact chat-notice">
       <summary><span className="chat-notice-label">{noticeLabel(t, notice)}</span>{time !== null && <> · {time}</>}</summary>
@@ -651,6 +795,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
       {copyError}
       {/* the skill this message invoked (omp, omo, pi): the runtime recorded its instructions with it */}
       <SkillActivityList parts={turn.parts} />
+      <ContextChips parts={turn.parts} />
     </article>;
   }
   const { work, answer } = splitTurn(turn.parts);
@@ -1339,10 +1484,12 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   const renderTurn = useCallback((row: { key: string; turn: ConversationTurn }, index: number) => {
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
+    const changes = settingChanges(shownTurns[index - 1]?.settings, turn.settings);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
+      {changes.length > 0 && <SettingMarks changes={changes} />}
       <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher]);
+  }, [shownTurns, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher]);
   const header = <>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First

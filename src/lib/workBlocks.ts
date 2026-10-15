@@ -1,6 +1,7 @@
 import type { ConversationPart, ConversationTurn } from "../../shared/protocol.ts";
 import { turnSkills } from "./skillActivity.ts";
 import { isTodoTool } from "./todos.ts";
+import { toolProfile } from "./toolProfiles.ts";
 import { t } from "./i18n.ts";
 
 export type ToolPart = Extract<ConversationPart, { kind: "tool" }>;
@@ -47,21 +48,29 @@ export function workStartsOpen(live: boolean, parts: ConversationPart[]): boolea
   return parts.slice(after).some((part) => part.kind === "text" && part.text.trim().length > 0);
 }
 
-type WorkCategory = "edit" | "read" | "command" | "other";
+type WorkCategory = "subagent" | "edit" | "read" | "command" | "search" | "web" | "other";
 
 /** "{n} edit" / "{n} edits": both forms are translated, Korean uses one */
 export const CATEGORY_LABEL: Record<WorkCategory, [singular: string, plural: string]> = {
+  subagent: ["{n} subagent", "{n} subagents"],
   edit: ["{n} edit", "{n} edits"],
   read: ["{n} file read", "{n} file reads"],
   command: ["{n} command", "{n} commands"],
+  search: ["{n} search", "{n} searches"],
+  web: ["{n} web request", "{n} web requests"],
   other: ["{n} other tool", "{n} other tools"],
 };
 
+/** A profiled tool counts under its profile's category; any other tool by its name. */
 function categorize(name: string): WorkCategory {
+  const profile = toolProfile(name);
+  if (profile !== null) return profile.category;
   const lower = name.toLowerCase();
+  if (/subagent/.test(lower) || lower === "agent" || lower === "task") return "subagent";
   if (/edit|write|patch|create_file|multiedit/.test(lower)) return "edit";
   if (/^(read|glob|grep|ls|list|search|find|cat)/.test(lower)) return "read";
   if (/bash|command|shell|exec|eval|run/.test(lower)) return "command";
+  if (/^(web|fetch_content|source_check|get_search_content)/.test(lower)) return "web";
   return "other";
 }
 
@@ -70,7 +79,7 @@ function categorize(name: string): WorkCategory {
  * The failures are not in it (`workFailed`): a narrow header cuts this line short.
  */
 export function workSummary(parts: readonly ConversationPart[]): string {
-  const counts: Record<WorkCategory, number> = { edit: 0, read: 0, command: 0, other: 0 };
+  const counts: Record<WorkCategory, number> = { subagent: 0, edit: 0, read: 0, command: 0, search: 0, web: 0, other: 0 };
   for (const part of parts) {
     if (part.kind !== "tool") continue;
     // a todo update is the plan, pinned under the chat, not an edit: TodoWrite would match /write/
@@ -89,6 +98,11 @@ export function workSummary(parts: readonly ConversationPart[]): string {
  */
 export function workFailed(parts: readonly ConversationPart[]): number {
   return parts.filter((part) => part.kind === "tool" && part.error === true).length;
+}
+
+/** The tool calls a turn made before the part at `index`: the calls a result can name (lib/toolProfiles.ts). */
+export function toolCallsBefore(parts: readonly ConversationPart[], index: number): ToolPart[] {
+  return parts.slice(0, index).filter((part): part is ToolPart => part.kind === "tool");
 }
 
 /** "7s" / "1m 12s" for a block header; null when the span is unknown or nonsense. */

@@ -17,6 +17,11 @@ describe("lineDiff", () => {
     expect(lineDiff("same", "same")).toEqual([{ kind: "same", text: "same" }]);
   });
 
+  it("reads a final newline as the end of the last line, not as an empty line", () => {
+    expect(lineDiff("", "### Added\n- a flag\n")).toEqual([{ kind: "add", text: "### Added" }, { kind: "add", text: "- a flag" }]);
+    expect(lineDiff("a\n\n", "a\nb\n")).toEqual([{ kind: "same", text: "a" }, { kind: "del", text: "" }, { kind: "add", text: "b" }]);
+  });
+
   it("gives up on a table too large, as removed then added", () => {
     const big = Array.from({ length: 600 }, (_, index) => `line ${index}`).join("\n");
     const lines = lineDiff(big, big + "\nmore");

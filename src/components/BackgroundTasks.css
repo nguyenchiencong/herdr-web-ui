@@ -283,3 +283,49 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* a background command's mark beside its name */
+.bg-task-kind {
+  width: 12px;
+  height: 12px;
+  margin-right: var(--space-1);
+  vertical-align: -2px;
+  color: var(--text-dim);
+}
+
+/* a command's output is read on request: a text button, then the end of its log in a box that scrolls */
+.bg-task-output-toggle {
+  align-self: flex-start;
+  min-height: var(--row-h);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.bg-task-output-toggle:hover,
+.bg-task-output-toggle[aria-expanded="true"] {
+  color: var(--text);
+}
+
+.bg-task-output {
+  margin: var(--space-1) 0 0;
+  max-height: calc(var(--row-h) * 9);
+  overflow: auto;
+  padding: var(--space-2);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* a pane at rest while its background work runs: the count shows beside the words */
+.bg-tasks-toggle.is-waiting .bg-tasks-count {
+  display: inline;
+}

@@ -78,8 +78,11 @@ export interface TaskNotification {
   agent: boolean;
 }
 
+/** pi-subagents writes this line after the closing tag of a completion; Claude Code writes nothing after it. */
+const TRANSCRIPT_FOOTER = /\s+Full transcript available at:[^\n]*$/;
+
 export function taskNotification(content: string): TaskNotification | null {
-  const block = content.trim();
+  const block = content.trim().replace(TRANSCRIPT_FOOTER, "").trim();
   if (!block.startsWith("<task-notification>") || !block.endsWith("</task-notification>")) return null;
   const tag = (name: string): string | null => block.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim() ?? null;
   const taskId = tag("task-id");
@@ -92,7 +95,8 @@ export function taskNotification(content: string): TaskNotification | null {
   return {
     taskId,
     toolUseId: tag("tool-use-id"),
-    status: raw === "completed" ? "completed" : raw === "failed" || raw === "error" ? "failed" : "cancelled",
+    // pi writes `Done` where Claude writes `completed`
+    status: raw === "completed" || raw === "Done" ? "completed" : raw === "failed" || raw === "error" ? "failed" : "cancelled",
     summary,
     result: from !== -1 && to > from ? block.slice(from + "<result>".length, to).trim() : "",
     agent: summary.startsWith('Agent "'),

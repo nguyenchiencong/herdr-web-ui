@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, sep } from "node:path";
 import type { HerdrPane } from "../shared/protocol.ts";
-import { panePidsOf, PiSubagentStatus, piSubagentTasks, piSubagentsDir, readPiSubagentRecords, type RecordCache } from "./pi-subagents.ts";
+import { FIRST_SCAN_BYTES, insideLogRoot, panePidsOf, PiSubagentStatus, piBackgroundLogDir, piBackgroundOutput, piEndedTasksOf, piSubagentTasks, piSubagentsDir, readPiSubagentRecords, type RecordCache } from "./pi-subagents.ts";
 import type { ProcessRow } from "./windows-processes.ts";
 
 const roots: string[] = [];
@@ -206,5 +206,208 @@ describe("panePidsOf", () => {
       { pid: 40, parent: 1, path: "C:/other.exe", commandLine: "other" },
     ];
     expect(panePidsOf({ shell_pid: 10, foreground_processes: [{ pid: 50 }] }, table).sort((a, b) => a - b)).toEqual([10, 20, 30, 50]);
+  });
+});
+
+/** Whether this platform lets a test make a link: Windows needs developer mode or a privilege for one. */
+const CAN_LINK = ((): boolean => {
+  const root = mkdtempSync(join(tmpdir(), "pi-link-probe-"));
+  try {
+    writeFileSync(join(root, "target"), "");
+    symlinkSync(join(root, "target"), join(root, "link"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+})();
+
+/** A pi session file and the background-job folder beside it, under a root of the test's own. */
+function session(): { file: string; root: string; logs: string } {
+  const root = mkdtempSync(join(tmpdir(), "pi-ended-"));
+  roots.push(root);
+  const logs = join(root, "agent", "logs", "bg-tasks");
+  mkdirSync(logs, { recursive: true });
+  return { file: join(root, "session.jsonl"), root, logs };
+}
+
+const stamp = (ms: number): string => new Date(ms).toISOString();
+
+/** A subagent's end record as pi writes it: its prompt and its result are in it, and the list leaves both out. */
+function endRecord(id: string, ended: number, overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    type: "custom", customType: "subagents:record", id: `e-${id}`, parentId: null, timestamp: stamp(ended),
+    data: { id, type: "reviewer", description: `review ${id}`, status: "completed", result: "SECRET RESULT", startedAt: ended - 61_000, completedAt: ended, toolUses: 6, durationMs: 61_000, tokens: 18_420, ...overrides },
+  });
+}
+
+/** A background command's completion notice as pi-background-jobs writes it; its command is left out of the list. */
+function commandNotice(logs: string, id: string, ended: number, overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    type: "custom_message", customType: "background-task-notification", id: `n-${id}`, parentId: null, timestamp: stamp(ended), display: true,
+    content: "<background-task-notification>\nBackground command \"unit tests\" finished with exit code 0.\n</background-task-notification>",
+    details: { id, name: "unit tests", command: "SECRET COMMAND", status: "completed", exitCode: 0, error: null, startTime: ended - 34_000, endTime: ended, outputPath: `.pi\\logs\\bg-tasks\\${id}.output`, logFile: join(logs, `${id}.output`), ...overrides },
+  });
+}
+
+describe("a pi transcript's ended subagents and background commands", () => {
+  it("lists the newest ten subagents and commands that ended in the last day, newest first, whichever kind", () => {
+    const { file, logs } = session();
+    const lines = Array.from({ length: 12 }, (_, index) => index % 2 === 0 ? endRecord(`sa_${index}`, NOW - index * 60_000) : commandNotice(logs, `bg_${index}`, NOW - index * 60_000));
+    writeFileSync(file, lines.reverse().join("\n") + "\n");
+    expect(piEndedTasksOf(file, logs, NOW).map((task) => task.id)).toEqual(["sa_0", "bg_1", "sa_2", "bg_3", "sa_4", "bg_5", "sa_6", "bg_7", "sa_8", "bg_9"]);
+  });
+
+  it("leaves out what ended more than a day before now", () => {
+    const { file, logs } = session();
+    writeFileSync(file, [endRecord("old", NOW - 25 * 3_600_000), endRecord("recent", NOW - 23 * 3_600_000)].join("\n") + "\n");
+    expect(piEndedTasksOf(file, logs, NOW).map((task) => task.id)).toEqual(["recent"]);
+  });
+
+  it("maps a subagent's end record and a background command's notice to tasks of their own kinds", () => {
+    const { file, logs } = session();
+    const log = join(logs, "bg_2a9.output");
+    writeFileSync(log, "1 failing\n");
+    writeFileSync(file, [
+      endRecord("sa_7f3c", NOW - 60_000, { status: "error", type: "reviewer", description: "Read retry code", toolUses: 6, tokens: 18_420 }),
+      commandNotice(logs, "bg_2a9", NOW - 5_000, { status: "completed", exitCode: 1, startTime: NOW - 39_000, endTime: NOW - 5_000, logFile: log }),
+    ].join("\n") + "\n");
+    expect(piEndedTasksOf(file, logs, NOW)).toEqual([
+      { id: "bg_2a9", title: "unit tests", category: "command", model: null, status: "failed", started_at: stamp(NOW - 39_000), ended_at: stamp(NOW - 5_000), turns: null, tool_calls: null, tokens: null, exit_code: 1, output: true },
+      { id: "sa_7f3c", title: "Read retry code", category: "reviewer", model: null, status: "failed", started_at: stamp(NOW - 60_000 - 61_000), ended_at: stamp(NOW - 60_000), turns: null, tool_calls: 6, tokens: 18_420 },
+    ]);
+  });
+
+  it("reads a stopped, aborted or steered subagent as cancelled, and an error as failed", () => {
+    const { file, logs } = session();
+    writeFileSync(file, ["stopped", "aborted", "steered", "error", "completed"].map((status, index) => endRecord(`sa_${status}`, NOW - index * 1000, { status })).join("\n") + "\n");
+    expect(piEndedTasksOf(file, logs, NOW).map((task) => [task.id, task.status])).toEqual([
+      ["sa_stopped", "cancelled"], ["sa_aborted", "cancelled"], ["sa_steered", "cancelled"], ["sa_error", "failed"], ["sa_completed", "completed"],
+    ]);
+  });
+
+  it("keeps a subagent's result and a command's command out of the list", () => {
+    const { file, logs } = session();
+    writeFileSync(file, endRecord("sa_1", NOW) + "\n" + commandNotice(logs, "bg_1", NOW) + "\n");
+    const json = JSON.stringify(piEndedTasksOf(file, logs, NOW));
+    expect(json).not.toContain("SECRET RESULT");
+    expect(json).not.toContain("SECRET COMMAND");
+  });
+
+  it("reads a transcript from where the last read stopped, leaves a line still being written for its end, and reads a rewritten file from its start", () => {
+    const { file, logs } = session();
+    const ids = () => piEndedTasksOf(file, logs, NOW).map((task) => task.id);
+    writeFileSync(file, endRecord("sa_1", NOW - 60_000) + "\n");
+    expect(ids()).toEqual(["sa_1"]);
+    appendFileSync(file, endRecord("sa_2", NOW - 30_000) + "\n");
+    expect(ids()).toEqual(["sa_2", "sa_1"]);
+    const partial = endRecord("sa_3", NOW);
+    appendFileSync(file, partial.slice(0, 40));
+    expect(ids()).toEqual(["sa_2", "sa_1"]);
+    appendFileSync(file, partial.slice(40) + "\n");
+    expect(ids()).toEqual(["sa_3", "sa_2", "sa_1"]);
+    writeFileSync(file, endRecord("sa_9", NOW) + "\n");
+    expect(ids()).toEqual(["sa_9"]);
+  });
+
+  it("reads only a long transcript's end first, from a line's start, then what is appended", () => {
+    const { file, logs } = session();
+    const ids = () => piEndedTasksOf(file, logs, NOW).map((task) => task.id);
+    // 1001-byte lines: the window's first byte falls inside one, which is skipped, not parsed from its middle
+    const filler = JSON.stringify({ type: "message", text: "x".repeat(972) });
+    const lines = (count: number) => Array.from({ length: count }, () => filler).join("\n");
+    const pastWindow = Math.ceil(FIRST_SCAN_BYTES / (filler.length + 1)) + 10;
+    writeFileSync(file, `${endRecord("sa_early", NOW - 60_000)}\n${lines(pastWindow)}\n${endRecord("sa_tail", NOW - 40_000)}\n${lines(10)}\n`);
+    // the early end is in the last day, yet before the window: the first read never reaches it
+    expect(ids()).toEqual(["sa_tail"]);
+    appendFileSync(file, endRecord("sa_new", NOW - 1000) + "\n");
+    expect(ids()).toEqual(["sa_new", "sa_tail"]);
+  });
+
+  it("names a log only inside pi's background-job folder: a path elsewhere, a traversal out of it and a relative path are refused", () => {
+    const { file, root, logs } = session();
+    const outside = join(root, "outside.output");
+    writeFileSync(outside, "SECRET OUTSIDE\n");
+    const inside = join(logs, "inside.output");
+    writeFileSync(inside, "inside\n");
+    const traversal = `${logs}${sep}..${sep}..${sep}..${sep}outside.output`;
+    writeFileSync(file, [
+      commandNotice(logs, "elsewhere", NOW, { logFile: outside }),
+      commandNotice(logs, "traversal", NOW - 1000, { logFile: traversal }),
+      commandNotice(logs, "absolute", NOW - 2000, { logFile: undefined, outputPath: outside }),
+      commandNotice(logs, "relative", NOW - 3000, { logFile: undefined, outputPath: ".pi\\logs\\bg-tasks\\relative.output" }),
+      commandNotice(logs, "inside", NOW - 4000, { logFile: inside }),
+    ].join("\n") + "\n");
+    const tasks = piEndedTasksOf(file, logs, NOW);
+    expect(Object.fromEntries(tasks.map((task) => [task.id, task.output]))).toEqual({ elsewhere: false, traversal: false, absolute: false, relative: false, inside: true });
+    for (const id of ["elsewhere", "traversal", "absolute", "relative"]) expect(piBackgroundOutput(file, id, logs)).toBeNull();
+    expect(piBackgroundOutput(file, "inside", logs)).toEqual({ output: "inside\n", cut: false, size: 7 });
+    expect(JSON.stringify(tasks)).not.toContain("SECRET OUTSIDE");
+  });
+
+  it("refuses a sibling folder that only shares the folder's name as a prefix", () => {
+    const { logs } = session();
+    const sibling = `${logs}-evil`;
+    mkdirSync(sibling);
+    writeFileSync(join(sibling, "x.output"), "SECRET\n");
+    expect(insideLogRoot(join(sibling, "x.output"), logs)).toBeNull();
+    expect(insideLogRoot(join(logs, "..", `${basename(logs)}-evil`, "x.output"), logs)).toBeNull();
+  });
+
+  it.skipIf(process.platform !== "win32")("reads a log inside the folder whatever the case of its path on Windows, and refuses a junction out of it", () => {
+    const { root, logs } = session();
+    writeFileSync(join(logs, "ok.output"), "ok\n");
+    expect(insideLogRoot(join(logs.toUpperCase(), "OK.OUTPUT"), logs)).not.toBeNull();
+    const outside = join(root, "junction-target");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "s.output"), "SECRET\n");
+    symlinkSync(outside, join(logs, "junction"), "junction");
+    expect(insideLogRoot(join(logs, "junction", "s.output"), logs)).toBeNull();
+  });
+
+  it("refuses the log folder itself and a folder inside it", () => {
+    const { logs } = session();
+    mkdirSync(join(logs, "sub"));
+    expect(insideLogRoot(logs, logs)).toBeNull();
+    expect(insideLogRoot(join(logs, "sub"), logs)).toBeNull();
+  });
+
+  it.skipIf(!CAN_LINK)("refuses a link inside the folder whose target lies outside it, even one made after the transcript was read", () => {
+    const { file, root, logs } = session();
+    const outside = join(root, "outside.output");
+    writeFileSync(outside, "SECRET OUTSIDE\n");
+    symlinkSync(outside, join(logs, "link.output"));
+    writeFileSync(file, commandNotice(logs, "linked", NOW, { logFile: join(logs, "link.output") }) + "\n");
+    expect(piEndedTasksOf(file, logs, NOW)[0]?.output).toBe(false);
+    expect(piBackgroundOutput(file, "linked", logs)).toBeNull();
+    const inner = join(logs, "inner.output");
+    writeFileSync(inner, "inner\n");
+    writeFileSync(file, commandNotice(logs, "later", NOW, { logFile: inner }) + "\n");
+    expect(piBackgroundOutput(file, "later", logs)).toEqual({ output: "inner\n", cut: false, size: 6 });
+    rmSync(inner);
+    symlinkSync(outside, inner);
+    expect(piBackgroundOutput(file, "later", logs)).toBeNull();
+  });
+
+  it("serves a short log whole, and a longer one's last 64 KB from a line's start, saying it was cut", () => {
+    const { file, logs } = session();
+    const short = join(logs, "short.output");
+    writeFileSync(short, "first\nsecond\n");
+    const long = join(logs, "long.output");
+    const lines = Array.from({ length: 30_000 }, (_, index) => `line ${index}`);
+    writeFileSync(long, lines.join("\n") + "\n");
+    writeFileSync(file, [commandNotice(logs, "short", NOW, { logFile: short }), commandNotice(logs, "long", NOW - 1000, { logFile: long })].join("\n") + "\n");
+    expect(piBackgroundOutput(file, "short", logs)).toEqual({ output: "first\nsecond\n", cut: false, size: 13 });
+    const tail = piBackgroundOutput(file, "long", logs);
+    expect(tail?.cut).toBe(true);
+    expect(tail?.size).toBe(Buffer.byteLength(lines.join("\n") + "\n"));
+    expect(Buffer.byteLength(tail?.output ?? "")).toBeLessThanOrEqual(64 * 1024);
+    expect(tail?.output.startsWith("line ")).toBe(true);
+    expect(tail?.output.endsWith("line 29999\n")).toBe(true);
+  });
+
+  it("names pi's background-job folder under the agent directory it is given", () => {
+    expect(piBackgroundLogDir("/home/x/.pi/agent")).toBe(join("/home/x/.pi/agent", "logs", "bg-tasks"));
   });
 });

@@ -466,7 +466,7 @@ try {
   const waitingBadge = agentRow(paneA).locator(".badge[data-status=waiting]");
   await waitingBadge.waitFor();
   assert.equal((await waitingBadge.textContent())?.trim(), "BG");
-  assert.equal(await waitingBadge.getAttribute("title"), "Agent waiting on background work");
+  assert.equal(await waitingBadge.getAttribute("title"), "Background work running");
   // BG is a still ring in the working colour; RUN is a dot of it that breathes (Sidebar.css)
   assert.equal(await waitingBadge.locator("svg").count(), 0, "BG draws no arc any more");
   const ring = waitingBadge.locator(".sidebar-status-dot");

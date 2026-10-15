@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, symlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { paneCommands } from "./commands.ts";
+import { paneAgents, paneCommands } from "./commands.ts";
+import type { PaneAgent } from "../shared/protocol.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -236,5 +237,129 @@ describe("pi's slash commands", () => {
 
   it("leaves a folder with no pi resources at its built-ins", () => {
     expect(paneCommands("pi", temp("pi-cwd-"), temp("pi-home-")).every((command) => command.source === "builtin")).toBeTrue();
+  });
+});
+
+describe("pi packages, skill switches and @agents", () => {
+  let savedAgentDir: string | undefined;
+  beforeEach(() => {
+    savedAgentDir = process.env["PI_CODING_AGENT_DIR"];
+    delete process.env["PI_CODING_AGENT_DIR"];
+  });
+  afterEach(() => {
+    if (savedAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = savedAgentDir;
+  });
+
+  const put = (path: string, text: string) => { mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, text); };
+  const skill = (folder: string, description: string | null, name?: string) => put(join(folder, "SKILL.md"), `---\n${name ? `name: ${name}\n` : ""}${description === null ? "" : `description: ${description}\n`}---\nbody\n`);
+  const writeTrust = (agentDir: string, store: Record<string, boolean | null>) => put(join(agentDir, "trust.json"), JSON.stringify(store));
+
+  it("resolves package skills from npm and local packages, narrowed the way the settings entry says", () => {
+    const home = temp("pi-packages-home-");
+    const agentDir = join(home, ".pi", "agent");
+    const npm = join(agentDir, "npm", "node_modules");
+    put(join(npm, "@example", "pi-tools", "package.json"), JSON.stringify({ name: "@example/pi-tools", pi: { skills: ["./resources/skills"] } }));
+    skill(join(npm, "@example", "pi-tools", "resources", "skills", "alpha"), "Alpha skill", "alpha");
+    skill(join(npm, "@example", "pi-tools", "resources", "skills", "undescribed"), null, "undescribed");
+    skill(join(npm, "@example", "pi-tools", "skills", "ignored"), "Not declared by the manifest");
+    skill(join(npm, "pkg-b", "skills", "keep-one"), "Kept one");
+    skill(join(npm, "pkg-b", "skills", "keep-two"), "Kept two");
+    skill(join(npm, "pkg-b", "skills", "keep-old"), "Old one");
+    skill(join(npm, "pkg-none", "skills", "hidden"), "Hidden by an empty filter");
+    skill(join(agentDir, "local-pack", "skills", "local"), "Local skill");
+    put(join(agentDir, "settings.json"), JSON.stringify({
+      packages: [
+        "npm:@example/pi-tools@1.0.0",
+        { source: "npm:pkg-b", skills: ["skills/keep-*", "!skills/keep-old"] },
+        { source: "npm:pkg-none", skills: [] },
+        "./local-pack",
+        "git:github.com/example/pi-git@v1",
+      ],
+    }));
+
+    expect(paneCommands("pi", null, home).filter((command) => command.source === "skill")).toEqual([
+      { name: "skill:alpha", description: "Alpha skill", source: "skill" },
+      { name: "skill:keep-one", description: "Kept one", source: "skill" },
+      { name: "skill:keep-two", description: "Kept two", source: "skill" },
+      { name: "skill:local", description: "Local skill", source: "skill" },
+    ]);
+  });
+
+  it("holds skill commands back when the personal settings switch them off, and skills without a description", () => {
+    const home = temp("pi-switch-home-");
+    const agentDir = join(home, ".pi", "agent");
+    skill(join(agentDir, "skills", "described"), "Described skill");
+    skill(join(agentDir, "skills", "bare"), null, "bare");
+    put(join(agentDir, "prompts", "review.md"), "---\ndescription: Review\n---\nbody\n");
+    expect(paneCommands("pi", null, home).filter((command) => command.source === "skill").map((command) => command.name)).toEqual(["skill:described"]);
+
+    put(join(agentDir, "settings.json"), JSON.stringify({ enableSkillCommands: false }));
+    const commands = paneCommands("pi", null, home);
+    expect(commands.some((command) => command.source === "skill")).toBeFalse();
+    expect(commands).toContainEqual({ name: "review", description: "Review", source: "user" });
+  });
+
+  it("lists personal agents always and a project's agents only where pi trusts the project", () => {
+    const home = temp("pi-agents-home-");
+    const agentDir = join(home, ".pi", "agent");
+    const project = temp("pi-agents-project-");
+    put(join(agentDir, "agents", "reviewer.md"), "---\ndescription: Personal reviewer\n---\nbody\n");
+    put(join(agentDir, "agents", "notes.md"), "No front matter here\n");
+    put(join(agentDir, "agents", "not mention safe.md"), "---\ndescription: Spaces\n---\n");
+    put(join(temp("pi-agents-target-"), "shared.md"), "---\ndescription: Shared\n---\n");
+    symlinkSync(join(temp("pi-agents-linked-"), "shared.md"), join(agentDir, "agents", "linked.md"));
+    put(join(project, ".pi", "agents", "reviewer.md"), "---\ndescription: Project reviewer\n---\n");
+    put(join(project, ".pi", "agents", "local-only.md"), "---\ndescription: Project only\n---\n");
+    const personal: PaneAgent[] = [
+      { name: "notes", description: "", source: "user" },
+      { name: "reviewer", description: "Personal reviewer", source: "user" },
+    ];
+
+    expect(paneAgents("pi", project, home)).toEqual(personal);
+    writeTrust(agentDir, { [project]: false });
+    expect(paneAgents("pi", project, home)).toEqual(personal);
+    writeTrust(agentDir, { [project]: true });
+    expect(paneAgents("pi", project, home)).toEqual([
+      { name: "local-only", description: "Project only", source: "project" },
+      { name: "notes", description: "", source: "user" },
+      { name: "reviewer", description: "Project reviewer", source: "project" },
+    ]);
+    expect(paneAgents("claude", project, home)).toEqual([]);
+  });
+
+  it("reads trust the way pi does: the nearest decision at or above the project decides", () => {
+    const home = temp("pi-trust-home-");
+    const agentDir = join(home, ".pi", "agent");
+    const root = temp("pi-trust-root-");
+    const project = join(root, "work", "repo");
+    put(join(project, ".pi", "agents", "inner.md"), "---\ndescription: Inner\n---\n");
+    const names = () => paneAgents("pi", project, home).map((agent) => agent.name);
+
+    writeTrust(agentDir, { [root]: true });
+    expect(names()).toEqual(["inner"]);
+    writeTrust(agentDir, { [root]: true, [join(root, "work")]: false });
+    expect(names()).toEqual([]);
+    writeTrust(agentDir, { [root]: true, [project]: null });
+    expect(names()).toEqual(["inner"]);
+  });
+
+  it("reads a trusted project's shared .agents/agents under its .pi/agents, and leaves out an agent its front matter disables", () => {
+    const home = temp("pi-workspace-home-");
+    const agentDir = join(home, ".pi", "agent");
+    const project = temp("pi-workspace-project-");
+    put(join(project, ".agents", "agents", "shared.md"), "---\ndescription: Shared workspace\n---\n");
+    put(join(project, ".agents", "agents", "reviewer.md"), "---\ndescription: Workspace reviewer\n---\n");
+    put(join(project, ".pi", "agents", "reviewer.md"), "---\ndescription: Project reviewer\n---\n");
+    put(join(agentDir, "agents", "retired.md"), "---\r\ndescription: Off\r\nenabled: false\r\n---\r\n");
+    put(join(agentDir, "agents", "helper.md"), "---\ndescription: Helper\nenabled: true\n---\n");
+
+    expect(paneAgents("pi", project, home)).toEqual([{ name: "helper", description: "Helper", source: "user" }]);
+    writeTrust(agentDir, { [project]: true });
+    expect(paneAgents("pi", project, home)).toEqual([
+      { name: "helper", description: "Helper", source: "user" },
+      { name: "reviewer", description: "Project reviewer", source: "project" },
+      { name: "shared", description: "Shared workspace", source: "project" },
+    ]);
   });
 });

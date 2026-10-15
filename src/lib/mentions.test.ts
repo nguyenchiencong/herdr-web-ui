@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { activeTrigger, applyCompletion } from "./mentions.ts";
+import { activeTrigger, applyCompletion, mentionChoiceId, mentionText, rankMentionChoices } from "./mentions.ts";
 import { rankSlashCommands } from "./compose.ts";
 
 describe("activeTrigger", () => {
@@ -97,5 +97,40 @@ describe("inline skill matching", () => {
       expect(trigger).not.toBeNull();
       expect(rankSlashCommands([skill], trigger!.query, {}, true)).toEqual([]);
     }
+  });
+});
+
+describe("rankMentionChoices", () => {
+  const agent = (name: string, description = "") => ({ name, description, source: "user" as const });
+
+  it("ranks an agent above files", () => {
+    const choices = rankMentionChoices("rev", [agent("reviewer", "Reviews code")], ["src/review.ts", "docs/rev.md"]);
+    expect(choices[0]).toEqual({ kind: "agent", agent: agent("reviewer", "Reviews code") });
+    expect(choices.slice(1)).toEqual([{ kind: "file", path: "src/review.ts" }, { kind: "file", path: "docs/rev.md" }]);
+  });
+
+  it("matches agents by prefix, then a word of the name, then a substring, and drops the rest", () => {
+    const choices = rankMentionChoices("review", ["unrelated", "prereview-bot", "code-review", "reviewer"].map((name) => agent(name)), []);
+    expect(choices.map((choice) => (choice.kind === "agent" ? choice.agent.name : choice.path))).toEqual(["reviewer", "code-review", "prereview-bot"]);
+  });
+
+  it("lists at most eight agents for an empty query, all before the files", () => {
+    const names = Array.from({ length: 10 }, (_, index) => `agent-${String(index).padStart(2, "0")}`);
+    const choices = rankMentionChoices("", names.map((name) => agent(name)), ["README.md"]);
+    expect(choices.filter((choice) => choice.kind === "agent")).toHaveLength(8);
+    expect(choices.slice(0, 8).every((choice) => choice.kind === "agent")).toBeTrue();
+    expect(choices.at(-1)).toEqual({ kind: "file", path: "README.md" });
+  });
+
+  it("matches no agent for a path-like query, which stays a file search", () => {
+    expect(rankMentionChoices("src/", [agent("src-helper")], ["src/app.ts"])).toEqual([{ kind: "file", path: "src/app.ts" }]);
+  });
+
+  it("identifies a row and names what completing it inserts", () => {
+    const reviewer = { kind: "agent" as const, agent: agent("reviewer") };
+    expect(mentionChoiceId(reviewer)).toBe("agent:reviewer");
+    expect(mentionText(reviewer)).toBe("reviewer");
+    expect(mentionChoiceId({ kind: "file", path: "src/a.ts" })).toBe("file:src/a.ts");
+    expect(mentionText({ kind: "file", path: "src/a.ts" })).toBe("src/a.ts");
   });
 });

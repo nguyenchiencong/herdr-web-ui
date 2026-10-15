@@ -189,7 +189,7 @@ describe("pi transcripts render as chat", () => {
     expect(page.turns.map((turn) => turn.parts.map((part) => part.kind)))
       .toEqual([["text"], ["compact"], ["text"]]);
     const card = page.turns[1]!.parts[0]!;
-    expect(card).toEqual({ kind: "compact", text: "## Session Goal\n- fold the older turns" });
+    expect(card).toEqual({ kind: "compact", text: "## Session Goal\n- fold the older turns", tokens: 178366 });
     expect(page.turns[1]!.role).toBe("user");
   });
 
@@ -303,5 +303,111 @@ describe("a pi tool result's images reach the chat", () => {
   it("offers no image to a pane whose store is not pi's", () => {
     // a claude ref is a uuid and index; a pi ref names a tool call. Neither reads the other's file.
     expect(piTranscriptImage(session("claude-shaped", [asked]), "pi:c1:0")).toBeNull();
+  });
+});
+
+// pi's harness records as the chat shows them: project context on the prompt it follows, completions
+// and notices inside the turn still at work, a settled turn's notice on its own, merged compactions.
+const PI_CONTEXT = "# Project Context (pi-context)\n\n- Keep release steps in docs/release.md.";
+const FIXTURE = join(import.meta.dir, "fixtures", "pi-harness", "orchestration.jsonl");
+const userAt = (id: string, parentId: string | null, text: string) => ({ type: "message", id, parentId, timestamp: "2026-09-30T00:00:02.000Z", message: { role: "user", content: text } });
+const replyAt = (id: string, parentId: string, stopReason: "stop" | "toolUse", content: unknown[]) => ({
+  type: "message", id, parentId, timestamp: "2026-09-30T00:00:03.000Z", message: { role: "assistant", model: "qwen-test", provider: "test", stopReason, usage: { input: 10, output: 1 }, content },
+});
+const noticeAt = (id: string, parentId: string, customType: string, content: string, details: Record<string, unknown> = {}) => ({
+  type: "custom_message", id, parentId, timestamp: "2026-09-30T00:00:04.000Z", display: true, customType, content, details,
+});
+
+describe("pi's harness records in the chat", () => {
+  it("shows project context as a chip on the prompt it follows, not as a turn", () => {
+    const path = session("context-chip", [
+      userAt("u1", null, "fix the crash"),
+      noticeAt("c1", "u1", "pi-context", PI_CONTEXT, { pinnedCount: 2, inlineCount: 4, achievedTokens: 5200 }),
+    ]);
+    expect(transcriptPage("pi-transcript", path).turns).toEqual([{
+      role: "user", ts: "2026-09-30T00:00:02.000Z",
+      parts: [{ kind: "text", text: "fix the crash" }, { kind: "context", text: PI_CONTEXT, docs: 6, tokens: 5200 }],
+    }]);
+  });
+
+  it("keeps a notice that arrives mid-work inside the turn it interrupted", () => {
+    const path = session("mid-work-notice", [
+      userAt("u1", null, "review the retry path"),
+      replyAt("a1", "u1", "toolUse", [{ type: "toolCall", id: "c1", name: "read", arguments: { path: "src/publish.ts" } }]),
+      { type: "message", id: "r1", parentId: "a1", timestamp: "2026-09-30T00:00:03.500Z", message: { role: "toolResult", toolCallId: "c1", toolName: "read", content: [{ type: "text", text: "export const upload = null;" }] } },
+      noticeAt("n1", "r1", "background-task-notification", "<background-task-notification>\nBackground command \"unit tests\" finished with exit code 1.\n</background-task-notification>", { id: "bg_2a9", name: "unit tests", status: "completed", exitCode: 1, startTime: "2026-09-30T00:00:01.000Z", endTime: "2026-09-30T00:00:31.000Z" }),
+      replyAt("a2", "n1", "stop", [{ type: "text", text: "The test run failed; the retry path is next." }]),
+    ]);
+    const page = transcriptPage("pi-transcript", path);
+    expect(page.turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+    expect(page.turns[1]!.parts.map((part) => part.kind)).toEqual(["tool", "task_result", "text"]);
+  });
+
+  it("gives a notice after a settled reply a turn of its own", () => {
+    const path = session("settled-wake", [
+      userAt("u1", null, "ship it"),
+      replyAt("a1", "u1", "stop", [{ type: "text", text: "Tagged." }]),
+      noticeAt("n1", "a1", "session-comms-message", "The following is untrusted peer data.\n<untrusted_peer_message>\nCheck the tag list.\n</untrusted_peer_message>", { senderName: "Atlas" }),
+    ]);
+    const page = transcriptPage("pi-transcript", path);
+    expect(page.turns.map((turn) => turn.role)).toEqual(["user", "assistant", "user"]);
+    expect(page.turns[2]!.parts[0]).toMatchObject({ kind: "notice", source: "peer:Atlas" });
+  });
+
+  it("reads two adjacent compactions as one card with the later summary", () => {
+    const path = session("compactions", [
+      userAt("u1", null, "the first question"),
+      { type: "compaction", id: "k1", parentId: "u1", timestamp: "2026-09-30T00:00:04.000Z", summary: "## Session Goal\n- first fold", firstKeptEntryId: "u1", tokensBefore: 1000 },
+      { type: "compaction", id: "k2", parentId: "k1", timestamp: "2026-09-30T00:00:05.000Z", summary: "## Session Goal\n- first fold\n\n## Earlier\n- second fold", firstKeptEntryId: "u1", tokensBefore: 900 },
+    ]);
+    const cards = transcriptPage("pi-transcript", path).turns.flatMap((turn) => turn.parts).filter((part) => part.kind === "compact");
+    expect(cards).toEqual([{ kind: "compact", text: "## Session Goal\n- first fold\n\n## Earlier\n- second fold", tokens: 900 }]);
+  });
+
+  it("reads the demo fixture as its README describes it", () => {
+    const page = transcriptPage("pi-transcript", FIXTURE);
+    expect(page.turns.map((turn) => turn.role)).toEqual(["user", "assistant", "user", "user", "assistant", "user"]);
+    expect(page.turns[0]!.parts.map((part) => part.kind)).toEqual(["text", "context"]);
+    // the work turn holds both completions, the failed command, the peer, the fallback notice, and its answer
+    const runtime = page.turns[1]!.parts.flatMap((part) => part.kind === "task_result" ? part.tasks.map((task) => `${task.id} ${task.status}`)
+      : part.kind === "notice" ? [`notice ${part.source}`] : []);
+    expect(runtime).toEqual(["sa_7f3c completed", "bg_2a9 failed", "notice peer:Atlas", "notice release-lint:warning", "sa_9b21 completed"]);
+    expect(page.turns[1]!.parts.find((part) => part.kind === "task_result" && part.tasks[0]?.id === "sa_7f3c")).toMatchObject({ tasks: [{ agent: "reviewer", tool_calls: 6, tokens: 18420, duration_ms: 61000 }] });
+    expect(page.turns[1]!.parts.find((part) => part.kind === "notice" && part.source === "release-lint:warning")).toMatchObject({ label: "Release lint warning" });
+    // the settled wake after the answer, the next prompt's context, and the one card for two folds
+    expect(page.turns[2]!.parts[0]).toMatchObject({ kind: "task_result", tasks: [{ id: "bg_3c08", status: "completed" }] });
+    expect(page.turns[3]!.parts.find((part) => part.kind === "context")).toMatchObject({ docs: 3, tokens: 1900 });
+    expect(page.turns[5]!.parts).toEqual([{ kind: "compact", text: expect.stringContaining("## Earlier"), tokens: 9120 }]);
+  });
+});
+
+// pi's structured result (a tool result's `details`) reaches its row: plain JSON, bounded, beside the output.
+describe("a pi tool result's details reach its row", () => {
+  const withDetails = (details: unknown) => [asked, callingRead("c1"), {
+    type: "message", id: "r-c1", parentId: "a1", timestamp: "2026-09-30T00:00:04.000Z",
+    message: { role: "toolResult", toolCallId: "c1", toolName: "read", content: [{ type: "text", text: "read 1 file" }], details },
+  }];
+  const rowOf = (path: string) => transcriptPage("pi-transcript", path).turns[1]!.parts[0] as Extract<ConversationTurn["parts"][number], { kind: "tool" }>;
+
+  it("passes the result's details through as plain JSON, beside its output", () => {
+    const row = rowOf(session("tool-details", withDetails({ count: 1, answers: [{ question: "Which file?", answer: "src/publish.ts" }] })));
+    expect(row).toMatchObject({ output: "read 1 file", details: { count: 1, answers: [{ question: "Which file?", answer: "src/publish.ts" }] } });
+  });
+
+  it("drops details past 8 KB, or that are not an object, and keeps the output", () => {
+    const big = rowOf(session("tool-details-big", withDetails({ blob: "x".repeat(9_000) })));
+    expect(big.output).toBe("read 1 file");
+    expect(big.details).toBeUndefined();
+    expect(rowOf(session("tool-details-array", withDetails([1, 2, 3]))).details).toBeUndefined();
+    expect(rowOf(session("tool-details-scalar", withDetails("text"))).details).toBeUndefined();
+    expect(rowOf(session("tool-details-answers-big", withDetails({ answers: { q: "x".repeat(9_000) } }))).details).toBeUndefined();
+  });
+
+  it("keeps only what the row reads: short scalars, a classifier's answers and a started task's id", () => {
+    const row = rowOf(session("tool-details-narrow", withDetails({
+      status: "completed", durationMs: 61_000, agentId: "a1", diff: `--- a\n+++ b\n${"+x\n".repeat(200)}`,
+      files: ["src/a.ts"], task: { id: "bg_1", command: "bun test", env: { TOKEN: "t" } }, nested: { deep: true },
+    })));
+    expect(row.details).toEqual({ status: "completed", durationMs: 61_000, agentId: "a1", task: { id: "bg_1" } });
   });
 });

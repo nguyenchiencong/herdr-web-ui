@@ -1,6 +1,6 @@
 /** Shared native-record rules keep paging, rendering and on-demand results consistent. */
 import type { ConversationPart, ConversationTurn, OmoTaskResult } from "../shared/protocol.ts";
-import type { SubagentDetail, TaskNotification } from "./claude-subagents.ts";
+import { taskNotification, type SubagentDetail, type TaskNotification } from "./claude-subagents.ts";
 import { skillInvocationPrompt } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
 
@@ -76,14 +76,40 @@ export function piMessage(value: unknown): Row | null {
  * user-pasted image is. `index` counts the images of that one result, which is what the
  * page's ref quotes, so a fetch never has to agree with the parse about anything else.
  */
-export function piResults(message: Row): { id: string; text: string; error: boolean; images: string[] }[] {
+export function piResults(message: Row): { id: string; text: string; error: boolean; images: string[]; details: unknown }[] {
   const blocks = message.role === "toolResult" ? [message] : Array.isArray(message.content) ? message.content.filter((block) => record(block).type === "toolResult") : [];
   return blocks.flatMap((value) => {
     const block = record(value);
     if (typeof block.toolCallId !== "string") return [];
     const images = (Array.isArray(block.content) ? block.content : []).map(piImageOf).filter((image): image is { media_type: string; data: string } => image !== null).map((image) => image.media_type);
-    return [{ id: block.toolCallId, text: resultText(block.content), error: block.isError === true, images }];
+    return [{ id: block.toolCallId, text: resultText(block.content), error: block.isError === true, images, details: block.details }];
   });
+}
+
+/** The most serialized bytes of a tool result's `details` the chat keeps; a larger one is dropped, the row keeps its output. */
+const TOOL_DETAILS_MAX_BYTES = 8 * 1024;
+
+/** A scalar of `details` longer than this is content, not a field the chat reads; it stays out of the page. */
+const TOOL_DETAILS_TEXT_MAX = 256;
+
+/**
+ * A tool result's `details` as plain JSON, as far as the chat reads them: the short scalars (the meta line, an
+ * agent id), a classifier's `answers`, and a started task's id. Everything else (a whole output, a diff, a list of
+ * files) stays out, and the rest is dropped past TOOL_DETAILS_MAX_BYTES, so a long session's page carries no copy
+ * of what its rows already hold.
+ */
+function plainToolDetails(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const kept: Record<string, unknown> = {};
+  for (const [key, field] of Object.entries(value)) {
+    if (typeof field === "number" || typeof field === "boolean" || (typeof field === "string" && field.length <= TOOL_DETAILS_TEXT_MAX)) kept[key] = field;
+    else if (key === "answers" && field !== null && typeof field === "object") kept[key] = field;
+    else if (key === "task" && typeof record(field).id === "string") kept[key] = { id: record(field).id };
+  }
+  let serialized: string | undefined;
+  try { serialized = JSON.stringify(kept); } catch { return undefined; }
+  if (serialized === undefined || serialized === "{}" || Buffer.byteLength(serialized, "utf8") > TOOL_DETAILS_MAX_BYTES) return undefined;
+  return JSON.parse(serialized) as Record<string, unknown>;
 }
 
 /** The image types a chat shows; pi names the type `mimeType` where Claude names it `media_type`. */
@@ -116,6 +142,7 @@ export const MAX_TURNS = 100;
  * gjc wakes the agent with a `custom_message` (a background job's result, `display: true`)
  * in the user's seat: the answer before it is final and the work after it is a new turn.
  * Merging across it buried that answer in the work block. The envelope is chrome.
+ * omp, omo and gjc keep this rule; pi's own records are classified by piCustomMessage.
  */
 export function piNotice(value: unknown): Extract<ConversationPart, { kind: "notice" }> | null {
   const entry = record(value);
@@ -128,6 +155,186 @@ export function piNotice(value: unknown): Extract<ConversationPart, { kind: "not
 const OMO_TASK_RESULT_MAX = 16_000;
 const label = (value: unknown): string | null => typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 const amount = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+
+/** The most of a context injection a chip keeps; past it the chip says the text was cut. */
+const CONTEXT_TEXT_MAX = 16_000;
+
+/** The custom messages pi's own harness writes: `pi-context` injects project context under each prompt. */
+const PI_CONTEXT_TYPE = "pi-context";
+const PI_CONTEXT_HEADING = "# Project Context (pi-context)";
+/** another session's message: its sender is named when the record says who sent it */
+const PI_PEER_TYPES = new Set(["session-comms-message", "bots-notification"]);
+
+/** The statuses pi's harness records use, mapped to a task card's. */
+const TASK_STATUSES = new Map<string, OmoTaskResult["status"]>([
+  ["completed", "completed"], ["done", "completed"], ["success", "completed"],
+  ["failed", "failed"], ["error", "failed"],
+  ["cancelled", "cancelled"], ["canceled", "cancelled"], ["aborted", "cancelled"], ["stopped", "cancelled"], ["killed", "cancelled"],
+]);
+const taskStatusOf = (value: unknown): OmoTaskResult["status"] | null => {
+  const raw = label(value);
+  return raw === null ? null : TASK_STATUSES.get(raw.toLowerCase()) ?? null;
+};
+const timeOf = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : typeof value === "string" && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
+/** Where the subagent type an `Agent` call asked for is kept, by task id, in the map OmO's titles share. */
+const agentKey = (taskId: string): string => `agent:${taskId}`;
+
+/** A task card from what a completion says; a result past OMO_TASK_RESULT_MAX is cut, and the card says so. */
+function taskCard(task: Pick<OmoTaskResult, "id" | "title" | "agent" | "status" | "duration_ms" | "tool_calls" | "tokens" | "result">): OmoTaskResult {
+  return {
+    ...task,
+    model: null,
+    turns: null,
+    result: task.result.slice(0, OMO_TASK_RESULT_MAX),
+    ...(task.result.length > OMO_TASK_RESULT_MAX ? { result_cut: true } : {}),
+  };
+}
+
+/**
+ * A pi-subagents completion: `details` names the task and its numbers, the envelope's `<result>`
+ * (else the preview `details` carries) its answer, and the Agent call that started it its type.
+ */
+function piSubagentTask(details: Row, text: string, agentType: (taskId: string) => string | null): OmoTaskResult | null {
+  const notice = taskNotification(text);
+  const id = label(details.id) ?? notice?.taskId ?? null;
+  if (id === null) return null;
+  const summaryTitle = /^Agent "(.*)"/.exec(notice?.summary ?? "")?.[1]?.trim();
+  return taskCard({
+    id,
+    title: label(details.description) ?? (summaryTitle || null) ?? id,
+    agent: agentType(id),
+    status: taskStatusOf(details.status) ?? notice?.status ?? "cancelled",
+    duration_ms: amount(details.durationMs),
+    tool_calls: amount(details.toolUses),
+    tokens: amount(details.totalTokens),
+    result: notice?.result || label(details.resultPreview) || "",
+  });
+}
+
+/** A background command's completion (pi-background-jobs): a non-zero exit is a failure, whatever its status says. */
+function piBackgroundTask(details: Row): OmoTaskResult | null {
+  const id = label(details.id);
+  if (id === null) return null;
+  const exitCode = typeof details.exitCode === "number" ? details.exitCode : null;
+  const failedExit = exitCode !== null && exitCode !== 0;
+  const error = label(details.error);
+  const stated = taskStatusOf(details.status);
+  const started = timeOf(details.startTime);
+  const ended = timeOf(details.endTime);
+  let status: OmoTaskResult["status"] = stated ?? "completed";
+  if (stated !== "cancelled" && (failedExit || error !== null)) status = "failed";
+  return taskCard({
+    id,
+    title: label(details.name) ?? label(details.description) ?? id,
+    agent: "command",
+    status,
+    duration_ms: started !== null && ended !== null && ended >= started ? ended - started : null,
+    tool_calls: null,
+    tokens: null,
+    result: error ?? (failedExit ? `Exit code ${exitCode}` : ""),
+  });
+}
+
+/** The card a harness completion ends: its details first, its envelope second. Null when it ends no task. */
+function piTask(type: string, text: string, details: Row, agentType: (taskId: string) => string | null): OmoTaskResult | null {
+  if (type === "background-task-notification" || text.startsWith("<background-task-notification>")) return piBackgroundTask(details);
+  if (type === "subagent-notification" || taskNotification(text) !== null) return piSubagentTask(details, text, agentType);
+  return null;
+}
+
+/** Who sent a message: its details name the sender (pi's session comms and bots), else its first item's sender. */
+function piSender(details: Row): string | null {
+  const first = record(Array.isArray(details.items) ? details.items[0] : undefined);
+  const bot = details.bot;
+  return label(details.senderName) ?? label(record(first.from).label) ?? label(bot) ?? label(record(bot).name) ?? label(record(bot).label);
+}
+
+/** A custom message's text, without the `<system-notice>` envelope some extensions wrap it in. */
+function customMessageText(content: unknown): string {
+  const body = typeof content === "string" ? content : Array.isArray(content)
+    ? content.flatMap((block) => { const part = record(block); return part.type === "text" && typeof part.text === "string" ? [part.text] : []; }).join("\n")
+    : "";
+  return body.trim().replace(/^<system-notice>\s*/, "").replace(/\s*<\/system-notice>$/, "").trim();
+}
+
+/** A runtime's name for a notice, read as words: `session-comms-notification` reads "Session comms". */
+function humanised(type: string): string {
+  const words = type.replace(/[:_-]+/g, " ").replace(/ (?:notification|message)$/i, "").trim().slice(0, 96).trim();
+  return words === "" ? "Notice" : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+}
+
+/** Project context a harness injected under a prompt: its counts when it reports them, its text up to CONTEXT_TEXT_MAX. */
+function piContextChip(text: string, details: Row): Extract<ConversationPart, { kind: "context" }> {
+  const counts = [amount(details.pinnedCount), amount(details.inlineCount)].filter((count): count is number => count !== null);
+  const tokens = amount(details.achievedTokens);
+  return {
+    kind: "context",
+    text: text.slice(0, CONTEXT_TEXT_MAX),
+    ...(text.length > CONTEXT_TEXT_MAX ? { text_cut: true } : {}),
+    ...(counts.length > 0 ? { docs: counts.reduce((sum, count) => sum + count, 0) } : {}),
+    ...(tokens !== null ? { tokens } : {}),
+  };
+}
+
+/** The most of each part of a compaction summary the chat keeps; past it the card says the summary was cut. */
+const COMPACT_TEXT_MAX = 16_000;
+/** pi writes the summary it folded in a `<previous-summary>` block; the block is the earlier part, the rest the newest. */
+const PREVIOUS_SUMMARY = /<previous-summary>([\s\S]*?)(?:<\/previous-summary>|$)/;
+
+/**
+ * A compaction's card: the newest part of its summary and, apart from it, the earlier summary pi folded in
+ * (the chat shows it on request), each bounded, with the context the compaction folded when pi recorded it.
+ */
+function piCompactPart(summary: string, tokens: number | null): Extract<ConversationPart, { kind: "compact" }> {
+  const match = PREVIOUS_SUMMARY.exec(summary);
+  const newest = (match === null ? summary : summary.slice(0, match.index) + summary.slice(match.index + match[0].length)).trim();
+  const earlier = match?.[1]?.trim() ?? "";
+  const cut = newest.length > COMPACT_TEXT_MAX || earlier.length > COMPACT_TEXT_MAX;
+  return {
+    kind: "compact",
+    text: newest.slice(0, COMPACT_TEXT_MAX),
+    ...(earlier.length > 0 ? { earlier: earlier.slice(0, COMPACT_TEXT_MAX) } : {}),
+    ...(cut ? { text_cut: true } : {}),
+    ...(tokens !== null ? { tokens } : {}),
+  };
+}
+
+/**
+ * What a pi `custom_message` is in the chat, or null when it draws nothing: hidden, empty, or project
+ * context with no prompt open to hang on. A harness completion is a task card; another session's
+ * message a notice sourced `peer:<sender>`; project context a chip on the prompt it follows (never a
+ * turn of its own); anything else a notice labelled from its customType.
+ */
+export function piCustomMessage(value: unknown, context: { afterPrompt: boolean; agentType: (taskId: string) => string | null }): ConversationPart | null {
+  const entry = record(value);
+  if (entry.type !== "custom_message" || entry.display === false) return null;
+  const text = customMessageText(entry.content);
+  if (text.length === 0) return null;
+  const type = typeof entry.customType === "string" ? entry.customType : "";
+  const details = record(entry.details);
+  const task = piTask(type, text, details, context.agentType);
+  if (task !== null) return { kind: "task_result", tasks: [task] };
+  const sender = piSender(details);
+  if (sender !== null || PI_PEER_TYPES.has(type)) return { kind: "notice", text, source: `peer:${sender ?? ""}` };
+  // only project context is a chip: any other message after a prompt keeps its own label
+  if (type === PI_CONTEXT_TYPE || text.startsWith(PI_CONTEXT_HEADING)) return context.afterPrompt ? piContextChip(text, details) : null;
+  return { kind: "notice", text, ...(type === "" ? {} : { source: type }), label: humanised(type) };
+}
+
+/** A runtime notice or a task card in the user's seat: it takes no place in the turn budget. */
+const isRuntimeTurn = (turn: ConversationTurn): boolean =>
+  turn.role === "user" && turn.parts.length > 0 && turn.parts.every((part) => part.kind === "notice" || part.kind === "task_result");
+
+/** The newest `maxTurns` turns, counting only the conversation (see isRuntimeTurn); the notices among or after them stay. */
+function keepNewest(turns: ConversationTurn[], maxTurns: number): ConversationTurn[] {
+  let counted = 0;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (!isRuntimeTurn(turns[index]!)) counted += 1;
+    if (counted === maxTurns) return turns.slice(index);
+  }
+  return turns;
+}
 
 /**
  * The summaries OmO's `task` calls gave their tasks, by task id: the call's result names the
@@ -234,15 +441,24 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
  * An assistant message that stopped for good (`stopReason: "stop"`) ends its turn: the next one
  * was woken by something nobody typed, such as omo's hidden monitor or background-task
  * notification. Merging across it folded the answer before it into the next turn's work block.
+ *
+ * With `options.pi` the records are pi's own (see piCustomMessage): a notice that arrives while the
+ * turn is at work stays in that turn, adjacent compactions merge into one card, and runtime notices
+ * take no place in `maxTurns`.
  */
-export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: { toolImages?: boolean; taskTitles?: Map<string, string> } = {}): ConversationTurn[] {
+export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: { toolImages?: boolean; taskTitles?: Map<string, string>; pi?: boolean } = {}): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
+  const pi = options.pi === true;
   /** tool parts still waiting for their result, by toolCall id */
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
-  /** what OmO's `task` calls called their tasks, by task id: the caller's, when it parses a page in stretches */
+  /** what OmO's `task` calls called their tasks, by task id: the caller's, when it parses a page in stretches; pi's subagent types too (agentKey) */
   const taskTitles = options.taskTitles ?? new Map<string, string>();
   /** the last assistant message stopped for good: the next one starts a turn of its own */
   let settled = false;
+  /** the prompt no assistant message has answered yet: project context injected now belongs to it */
+  let openPrompt: ConversationTurn | null = null;
+  /** the subagent type each pi `Agent` call asked for, by call id, until its result names the subagent's id */
+  const agentCalls = new Map<string, string>();
 
   const assistantTurn = (ts?: string): ConversationTurn => {
     const last = turns[turns.length - 1];
@@ -255,6 +471,32 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
   const contentParts = (content: unknown): { type?: string; text?: unknown }[] =>
     Array.isArray(content) ? content.filter((part) => typeof part === "object" && part !== null) : [];
 
+  /**
+   * A custom message pi's harness wrote, placed in the chat. Context joins the prompt it follows; a
+   * notice or a task card joins the turn still at work, so that turn stays whole, and else starts a
+   * user-seat turn of its own. Adjacent task cards merge into one.
+   */
+  const placePiMessage = (entry: unknown, ts: string | undefined): void => {
+    const part = piCustomMessage(entry, { afterPrompt: openPrompt !== null, agentType: (taskId) => taskTitles.get(agentKey(taskId)) ?? null });
+    if (part === null) return;
+    if (part.kind === "context") {
+      openPrompt?.parts.push(part);
+      return;
+    }
+    const last = turns[turns.length - 1];
+    if (!settled && last?.role === "assistant") {
+      last.parts.push(part);
+      return;
+    }
+    const previous = last?.role === "user" ? last.parts[0] : undefined;
+    if (part.kind === "task_result" && last?.role === "user" && last.parts.length === 1 && previous?.kind === "task_result") {
+      const seen = new Set(previous.tasks.map((task) => task.id));
+      last.parts[0] = { kind: "task_result", tasks: [...previous.tasks, ...part.tasks.filter((task) => !seen.has(task.id))] };
+      return;
+    }
+    turns.push({ role: "user", ts: ts ?? null, parts: [part] });
+  };
+
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
     let entry: unknown;
@@ -264,8 +506,12 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
       continue; // a torn tail line while omp is mid-append
     }
     if (entry === null || typeof entry !== "object") continue;
-    if (isContextClear(entry, "omp-transcript")) { turns.length = 0; pending.clear(); continue; }
+    if (isContextClear(entry, "omp-transcript")) { turns.length = 0; pending.clear(); openPrompt = null; continue; }
     const timestamp = (entry as { timestamp?: string }).timestamp;
+    if (pi && (entry as { type?: unknown }).type === "custom_message") {
+      placePiMessage(entry, timestamp);
+      continue;
+    }
     const notice = piNotice(entry);
     if (notice !== null) {
       turns.push({ role: "user", ts: timestamp ?? null, parts: [notice] });
@@ -279,11 +525,21 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
     // pi folds old context into a summary of its own accord and on /compact. The entry is a
     // tree entry, not a message, so it reaches the chat only through this branch: the card
     // says where the conversation was cut, and pi keeps answering from the summary onward.
-    // piNotice above only claims `custom_message`, so a compaction entry always reaches here.
+    // piNotice (and placePiMessage) above only claim `custom_message`, so a compaction entry always reaches here.
     if ((entry as { type?: unknown }).type === "compaction") {
       const summary = (entry as { summary?: unknown }).summary;
+      openPrompt = null;
       if (typeof summary === "string" && summary.trim().length > 0) {
-        turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "compact", text: summary }] });
+        const part = piCompactPart(summary, amount((entry as { tokensBefore?: unknown }).tokensBefore));
+        const card: ConversationTurn = { role: "user", ts: timestamp ?? null, parts: [part] };
+        const last = turns[turns.length - 1];
+        const earlierCard = last?.role === "user" && last.parts.length === 1 ? last.parts[0] : undefined;
+        // pi folds again before a fold's card was read: the later summary carries the earlier one inside it, and the
+        // card keeps the later figure, or the earlier one when the later records none
+        if (pi && earlierCard?.kind === "compact") {
+          if (part.tokens === undefined && earlierCard.tokens !== undefined) part.tokens = earlierCard.tokens;
+          turns[turns.length - 1] = card;
+        } else turns.push(card);
       }
       continue;
     }
@@ -291,11 +547,18 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
     if (message === null) continue;
     const applyResults = () => {
       for (const result of piResults(message)) {
+        // the result an Agent call got names the subagent it started; that subagent's completion reports the type
+        const subagentType = agentCalls.get(result.id);
+        const subagentId = subagentType === undefined ? undefined : /Agent ID:\s*([A-Za-z0-9_-]+)/.exec(result.text)?.[1];
+        if (pi && subagentType !== undefined && subagentId !== undefined) taskTitles.set(agentKey(subagentId), subagentType);
         const tool = pending.get(result.id);
         if (!tool) continue;
         pending.delete(result.id);
         trimOutput(tool, result.text, result.id);
         if (result.error) tool.error = true;
+        // pi's structured result for the row: the chat reads it, the output above stays as it was
+        const details = pi ? plainToolDetails(result.details) : undefined;
+        if (details !== undefined) tool.details = details;
         if (options.toolImages === true && result.images.length > 0) {
           // addressed by the call it answers: a nested result shares its entry with other
           // blocks, so the entry id alone could not say which one an image came from
@@ -319,11 +582,14 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
       // SKILL.md the runtime put before it. Kept on this record, so no page boundary can part them
       const invocation = skillInvocationPrompt(prompt);
       const asked = invocation === null ? prompt : invocation.request || invocation.skills.map((skill) => `/skill:${skill.name}`).join(" ");
-      turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "text", text: asked }, ...(invocation?.skills ?? []).map((skill) => ({ kind: "skill" as const, skill }))] });
+      const turn: ConversationTurn = { role: "user", ts: timestamp ?? null, parts: [{ kind: "text", text: asked }, ...(invocation?.skills ?? []).map((skill) => ({ kind: "skill" as const, skill }))] };
+      turns.push(turn);
+      openPrompt = turn;
       continue;
     }
 
     if (message.role === "assistant" && Array.isArray(message.content)) {
+      openPrompt = null;
       const turn = assistantTurn(timestamp);
       if (timestamp) turn.end_ts = timestamp;
       for (const block of message.content) {
@@ -346,6 +612,10 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
           };
           turn.parts.push(part);
           if (typeof b.id === "string") pending.set(b.id, part);
+          if (pi && b.name === "Agent" && typeof b.id === "string") {
+            const subagentType = input["subagent_type"];
+            if (typeof subagentType === "string") agentCalls.set(b.id, subagentType);
+          }
         }
         // unsupported transcript parts are intentionally ignored
       }
@@ -360,5 +630,6 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
     }
   }
 
-  return turns.filter((turn) => turn.parts.length > 0).slice(-maxTurns);
+  const shown = turns.filter((turn) => turn.parts.length > 0);
+  return pi ? keepNewest(shown, maxTurns) : shown.slice(-maxTurns);
 }

@@ -22,7 +22,7 @@ const LONG_MODEL = "gpt-5.6-sol-codex-preview-2026-10";
 // ids it names: "GPT-5.6" and "Opus 5.5"; null: the conversation names no model
 const NAMED = ["gpt-5.6", "claude-opus-5-5"] as const;
 
-interface Case { model: string | null; agent?: "claude" | "codex" | "pi" | "omo"; pending?: boolean; effort?: string | null; status?: "working" | "idle"; mic?: boolean; ring?: boolean; chatFontSize?: number | null; showUsage?: boolean; weeklyOnly?: boolean; suggestion?: string | null; contextUsed?: number; stream?: number }
+interface Case { model: string | null; agent?: "claude" | "codex" | "pi" | "omo"; pending?: boolean; effort?: string | null; status?: "working" | "idle"; mic?: boolean; ring?: boolean; chatFontSize?: number | null; showUsage?: boolean; weeklyOnly?: boolean; suggestion?: string | null; contextUsed?: number; stream?: number; mode?: string | null }
 type Draw = "full" | "no-effort" | "out";
 
 const measure = (page: Page) => page.evaluate(() => {
@@ -160,7 +160,7 @@ try {
         { name: "plugin:deploy", description: "Deploy through a plugin", source: "plugin" }
       );
       if (window.fitCase.weeklyOnly && value.id === "codex" && Array.isArray(value.windows)) value.windows = value.windows.filter((limit) => limit.kind !== "session");
-      if (Array.isArray(value.turns) && value.metadata) value.metadata = { model: window.fitCase.model, reasoning_effort: window.fitCase.effort, ...(window.fitCase.ring ? { context: { used: window.fitCase.contextUsed ?? 151000, window: 272000 } } : {}) };
+      if (Array.isArray(value.turns) && value.metadata) value.metadata = { model: window.fitCase.model, reasoning_effort: window.fitCase.effort, ...(window.fitCase.mode ? { mode: window.fitCase.mode } : {}), ...(window.fitCase.ring ? { context: { used: window.fitCase.contextUsed ?? 151000, window: 272000 } } : {}) };
       if (Array.isArray(value.turns) && window.fitCase.stream) {
         const turn = value.turns.findLast((turn) => turn.role === "assistant");
         const text = "Streamed update " + window.fitCase.stream;
@@ -516,7 +516,7 @@ try {
           }
         }
         await box.fill("see @src");
-        await page.getByRole("listbox", { name: "Files", exact: true }).waitFor();
+        await page.getByRole("listbox", { name: "Agents and files", exact: true }).waitFor();
         await box.fill("look at /tmp");
         await box.press("Enter");
         await page.getByText("look at /tmp", { exact: true }).waitFor();
@@ -551,6 +551,29 @@ try {
         assert.ok(row.send && !row.queue && !row.sendOptions);
       });
       console.log("PASS agents at 350, 390, 800 and 1440px use one Stop/Send control with no Queue or dropdown");
+
+      // pi's mode sits in the pill beside the model; at 320px it gives way with the label, and is never drawn over a neighbour
+      for (const width of [320, 390]) for (const model of ["gpt-5.6", LONG_MODEL]) await withCard(browser, width, { agent: "pi", model, mode: "orchestrate", status: "idle" }, async (page) => {
+        await page.locator(".composer-mode").waitFor({ state: "attached" });
+        const row = await measure(page);
+        const fitted = await drawn(page, row.draw as Draw, `pi ${width}px, ${model} in a mode`);
+        const mode = await page.locator(".composer-mode").evaluate((node) => {
+          const box = node.getBoundingClientRect(), pill = node.closest(".composer-pill")!.getBoundingClientRect();
+          // stepped out, the label is a clipped 1px box: the mode inside it keeps its own size, but is not drawn
+          const label = node.closest(".composer-model-info")!.getBoundingClientRect();
+          return { width: box.width, labelWidth: label.width, text: node.textContent, title: node.getAttribute("title"),
+            inPill: box.left >= pill.left - 0.5 && box.right <= pill.right + 0.5 && box.top >= pill.top - 0.5 && box.bottom <= pill.bottom + 0.5 };
+        });
+        assert.equal(mode.text, "orchestrate");
+        assert.equal(mode.title, "Mode: orchestrate", "the whole mode is named where the chip is cut");
+        if (fitted.draw === "out") assert.ok(mode.labelWidth <= 1, `pi ${width}px: the mode steps out with the label: ${JSON.stringify(mode)}`);
+        else {
+          assert.ok(mode.inPill, `pi ${width}px: the mode is drawn inside the pill: ${JSON.stringify({ mode, fitted })}`);
+          // the mode is the first word to give way: it takes no room while the model's name is cut
+          assert.ok(mode.width <= 1 || !fitted.model?.clipped, `pi ${width}px: the model's name is cut while the mode keeps its room: ${JSON.stringify({ mode, fitted })}`);
+        }
+      });
+      console.log("PASS a pi pane's mode fits beside the model at 320 and 390px");
 
       for (const width of [320, 330, 350, 390]) await withCard(browser, width, { agent: "codex", model: LONG_MODEL, mic: true }, async (page) => {
         await draft(page);

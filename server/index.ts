@@ -13,7 +13,7 @@ import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isSe
 import { DeviceStore, handleDeviceRequest, type DeviceMatch } from "./devices.ts";
 import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
 import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
-import { paneCommands } from "./commands.ts";
+import { paneAgents, paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
 import { badRequest, conflictResponse, errorResponse, isCount, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
@@ -29,7 +29,8 @@ import { createGjcStatus, gjcPanes, readOmoSnapshot, reconcileProviderStatus } f
 import { OMO_ALIASES, OmoStatus, processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
 import { ClaudeSubagentStatus, claudeSubagents, within } from "./claude-subagents.ts";
-import { PiSubagentStatus, panePiProcesses, piSubagentsDir, piSubagentsOf, type RecordCache } from "./pi-subagents.ts";
+import { PiSubagentStatus, panePiProcesses, piBackgroundLogDir, piBackgroundOutput, piEndedTasksOf, piSubagentsDir, piSubagentsOf, type RecordCache } from "./pi-subagents.ts";
+import { piTranscriptPath } from "./pi.ts";
 import { BackgroundWait } from "./background-wait.ts";
 import { SessionPlans } from "./session-plan.ts";
 import { codexOpenRollout, paneCodexHome } from "./codex.ts";
@@ -1136,6 +1137,13 @@ export function createServer(
   const piStateDir = piSubagentsDir(options.piAgentDir);
   /** the state directory's records, read again only where they changed; the list of a pi pane reads them too */
   const piRecords: RecordCache = new Map();
+  /** pi's background-job folder: the only place a background command's log is read from (piBackgroundOutput) */
+  const piLogRoot = piBackgroundLogDir(options.piAgentDir);
+  /** A pi pane's tasks: its running subagents, then the subagents and background commands its transcript ended in the last day, newest first */
+  const piTasksOf = async (paneId: string) => {
+    const [running, transcript] = await Promise.all([piSubagentsOf(paneId, piStateDir, piRecords), piTranscriptPath(paneId).catch(() => null)]);
+    return [...running, ...(transcript !== null && "path" in transcript ? piEndedTasksOf(transcript.path, piLogRoot) : [])];
+  };
   const piAgents = new PiSubagentStatus({
     dir: piStateDir,
     processes: panePiProcesses,
@@ -1676,12 +1684,18 @@ export function createServer(
     if (changed) push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
   }
 
-  /** A pi pane's subagents started or ended: no turn, so the status stands and nothing is alerted. */
+  /**
+   * A pi pane's subagents started or ended: no turn, so the status stands. A pane at rest while they run waits on them
+   * (background-wait.ts), as a Claude pane does: the alerts take it for working until that work and its turn are over.
+   */
   function piAgentsChanged(paneId: string, running: number): void {
     const status = completions.current(paneId);
     // a pane never reported here carries its count in the next snapshot
     if (status === undefined) return;
+    const held = waits.waiting(paneId);
+    waits.running(paneId, running, null, false);
     broadcastAll(paneStatus(paneId, status, { background_tasks: running }));
+    if (waits.waiting(paneId) !== held) push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
   }
 
   /** A wait ran out (its work ended and no turn followed, or it was held as long as one is): the status it stood for. */
@@ -1742,7 +1756,9 @@ export function createServer(
         settling = paneId;
         try { claudeAgents.poll(paneId); } finally { settling = null; }
         waits.status(paneId, status);
-      } else waits.forget(paneId);
+      // a pi pane keeps its rests, so a pane at rest while its subagents run keeps holding its turn (piAgentsChanged)
+      } else if (agent === "pi") waits.status(paneId, status);
+      else waits.forget(paneId);
       broadcastAll(paneStatus(paneId, status, claude ? { background_tasks: claudeAgents.countOf(paneId) } : {}));
       push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
     },
@@ -2462,7 +2478,7 @@ export function createServer(
           if (pathname === "/api/pane/commands") {
             // herdr names an omo pane `pi` while omo waits: pi's commands and templates are not omo's
             const agent = context.agent === "pi" && await paneRunsOmo(paneId) ? "omo" : context.agent;
-            return jsonResponse({ commands: paneCommands(agent, context.cwd) });
+            return jsonResponse({ commands: paneCommands(agent, context.cwd), agents: paneAgents(agent, context.cwd) });
           }
           const limitRaw = url.searchParams.get("limit");
           const limit = limitRaw === null ? 20 : Number(limitRaw);
@@ -2492,9 +2508,9 @@ export function createServer(
           }
           const claude = claudeAgents.sessionOf(paneId);
           if (claude !== null) return jsonResponse({ tasks: claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt), runs: [], server_time });
-          // a pi pane's running subagents, from pi's own records for the pi processes the pane runs (server/pi-subagents.ts)
+          // a pi pane's running subagents, from pi's own records for the pi processes the pane runs, and the ones its transcript ended (server/pi-subagents.ts)
           const target = await paneGet(paneId).catch(() => null);
-          const tasks = target?.agent === "pi" ? await piSubagentsOf(paneId, piStateDir, piRecords) : [];
+          const tasks = target?.agent === "pi" ? await piTasksOf(paneId) : [];
           return jsonResponse({ tasks, runs: [], server_time });
         }
         return jsonResponse({ tasks: omoTasks(session.cwd, session.sessionId, processAlive), runs: omoRuns(session.cwd, session.sessionId), server_time });
@@ -2614,6 +2630,22 @@ export function createServer(
         try {
           const text = await paneSelectionRead(paneId, { row: anchorRow!, col: anchorCol! }, { row: cursorRow!, col: cursorCol! });
           return jsonResponse({ text });
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/pane/background-output") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        const paneId = url.searchParams.get("pane_id");
+        const taskId = url.searchParams.get("task_id");
+        if (!paneId || !taskId) return badRequest("missing_parameter", "pane_id and task_id query parameters are required");
+        try {
+          // the log is the one this pane's transcript names for the task, and it must lie in pi's background-job folder: no path a request names is read
+          const transcript = await piTranscriptPath(paneId);
+          const output = transcript !== null && "path" in transcript ? piBackgroundOutput(transcript.path, taskId, piLogRoot) : null;
+          if (output === null) return jsonResponse({ error: { code: "output_not_found", message: "no output of this background task is available" } }, 404);
+          return jsonResponse(output);
         } catch (error) {
           return errorResponse(error);
         }

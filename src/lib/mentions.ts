@@ -1,3 +1,5 @@
+import type { PaneAgent } from "../../shared/protocol.ts";
+
 export type ActiveTrigger = {
   kind: "slash" | "file";
   /** `$`: a skill named the way Codex takes it (`$name`), anywhere a word starts; absent for `/` */
@@ -62,4 +64,41 @@ export function applyCompletion(
   const punctuated = replacement.endsWith(" ") && /^\p{P}/u.test(after);
   const inserted = replacement.endsWith(" ") && (after.startsWith(" ") || punctuated) ? replacement.slice(0, -1) : replacement;
   return { text: text.slice(0, trigger.start) + inserted + after, caret: trigger.start + (punctuated ? inserted : replacement).length };
+}
+
+/** One row of the `@` menu: a pi agent the message can mention, or a file path. */
+export type MentionChoice = { kind: "agent"; agent: PaneAgent } | { kind: "file"; path: string };
+
+/** The most agents the `@` menu lists, so the files beneath them stay in view. */
+const MENTION_AGENT_LIMIT = 8;
+
+/**
+ * What the `@` menu offers for a query: the agents whose name starts with it, then those with a word
+ * of the name starting with it, then those containing it; then the files, in the order given. An agent
+ * always ranks above a file, and a path-like query matches no agent name.
+ */
+export function rankMentionChoices(query: string, agents: readonly PaneAgent[], files: readonly string[]): MentionChoice[] {
+  const needle = query.toLocaleLowerCase();
+  const matched = agents.flatMap((agent) => {
+    const name = agent.name.toLocaleLowerCase();
+    const tier = needle === "" || name.startsWith(needle) ? 0
+      : name.split(/[-_]/).some((word) => word.startsWith(needle)) ? 1
+        : name.includes(needle) ? 2 : null;
+    return tier === null ? [] : [{ agent, tier }];
+  });
+  matched.sort((left, right) => left.tier - right.tier || left.agent.name.localeCompare(right.agent.name));
+  return [
+    ...matched.slice(0, MENTION_AGENT_LIMIT).map(({ agent }): MentionChoice => ({ kind: "agent", agent })),
+    ...files.map((path): MentionChoice => ({ kind: "file", path })),
+  ];
+}
+
+/** The identity of a menu row, so the highlight follows the row across renders. */
+export function mentionChoiceId(choice: MentionChoice): string {
+  return choice.kind === "agent" ? `agent:${choice.agent.name}` : `file:${choice.path}`;
+}
+
+/** What completing a row puts after the `@`. */
+export function mentionText(choice: MentionChoice): string {
+  return choice.kind === "agent" ? choice.agent.name : choice.path;
 }

@@ -1008,7 +1008,10 @@
   .chat-copy,
   .chat-bubble-fold,
   .markdown-code-copy,
-  .markdown-code-more {
+  .markdown-code-more,
+  .chat-compact > summary,
+  .chat-context > summary,
+  .chat-compact-earlier {
     min-height: var(--touch-target);
   }
 
@@ -1307,6 +1310,23 @@
   border-radius: var(--radius-lg);
 }
 
+/* the summary a compaction folded in: a text button under the newest part, opening the earlier one */
+.chat-compact-earlier {
+  margin-top: var(--space-2);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.chat-compact-earlier:hover,
+.chat-compact-earlier[aria-expanded="true"] {
+  color: var(--text);
+}
+
 /* a summary opened on request, not the conversation: it keeps the body size */
 .chat-compact-text .markdown {
   font-size: var(--fs-md);
@@ -1519,6 +1539,114 @@
 }
 .chat-task-call-prompt { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* a profiled tool's icon before its label, in the verb's dim face */
+.work-row-icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  margin-right: var(--space-1);
+  vertical-align: -0.125em;
+  color: var(--text-dim);
+}
+
+/* a call's arguments as fields in the detail's box: the key dim, the value after it; on a phone each
+   value sits under its key at full width, so a long one wraps */
+.chat-args {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+}
+
+.chat-args dt { color: var(--text-dim); }
+.chat-args dd { min-width: 0; margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.chat-args-empty { color: var(--text-dim); }
+
+.chat-args-nested {
+  margin-top: var(--space-1);
+  padding-left: var(--space-3);
+  border-left: var(--hairline) solid var(--border);
+}
+
+.chat-args-list { margin: 0; padding-left: var(--space-4); }
+
+/* a value that runs over a line, or has one, keeps its line breaks and wraps where it must */
+.chat-args-text,
+.chat-args .hl-code {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .chat-args { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .chat-args dt { margin-top: var(--space-1); }
+  .chat-args dt:first-child { margin-top: 0; }
+}
+
+/* a result's scalars as one dim line under its arguments */
+.chat-tool-meta { margin: 0; color: var(--text-dim); font-size: var(--fs-2xs); }
+
+/* a result that reads as Markdown: prose at the narration's size, wrapping */
+.chat-tool-markdown { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+
+/* jev_decide's answers: question, answer and a confidence meter */
+.chat-answers {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-xs);
+}
+
+.chat-answers th,
+.chat-answers td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: var(--hairline) solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.chat-answers thead th {
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+}
+
+.chat-answer-question {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: var(--fw-regular);
+  overflow-wrap: anywhere;
+}
+
+.chat-answer-confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.chat-answer-meter {
+  display: inline-block;
+  width: 4em;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.chat-answer-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
 /* under the message that invoked it, on the message's side */
 .chat-turn-user .chat-skills { justify-content: flex-end; margin: 0; }
 
@@ -1528,3 +1656,17 @@
 .chat-abandoned { margin: var(--space-2) 0; }
 .chat-abandoned > summary { font-style: italic; }
 .chat-abandoned-note { margin: var(--space-2) 0 0; color: var(--text-dim); }
+
+/* a turn where a pi session's model, thinking level or mode changed: a thin marker above that turn */
+.chat-setting-marks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-block: var(--space-2);
+}
+
+.chat-setting-mark {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}

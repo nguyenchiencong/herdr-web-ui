@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { TOOL_PROFILES } from "./toolProfiles.ts";
 import { isToolNarration, toolVerb, toolVerbKind } from "./toolVerbs.ts";
 
 describe("toolVerbKind", () => {
@@ -92,6 +93,15 @@ describe("toolVerb", () => {
   it("keeps the id of a tool it does not know", () => {
     expect(toolVerb(part("Grep", { pattern: "TODO" }), "TODO")).toBeNull();
     expect(toolVerb(part("mcp__linear__create_issue", { path: "Fix the chart" }), "Fix the chart")).toBeNull();
+  });
+});
+
+describe("profiled tools", () => {
+  it("has no verb: the profile's label takes the verb's place", () => {
+    for (const name of Object.keys(TOOL_PROFILES)) {
+      expect([name, toolVerbKind(name)]).toEqual([name, null]);
+      expect([name, toolVerb({ name, input: '{"description":"x","command":"y"}' }, "y")]).toEqual([name, null]);
+    }
   });
 });
 

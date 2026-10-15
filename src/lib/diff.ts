@@ -8,13 +8,19 @@ export interface DiffLine {
   text: string;
 }
 
+/** A text's lines; a final newline ends the last line and starts no empty one, so a new file's text is not drawn with a blank `+` line. */
+function linesOf(text: string): string[] {
+  if (text === "") return [];
+  return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
+}
+
 /** Past this many line pairs the table costs more than it shows: removed, then added. */
 const MAX_CELLS = 250_000;
 
 export function lineDiff(before: string, after: string): DiffLine[] {
   // nothing on one side is no line there: an insertion is all added, a removal all removed
-  const a = before === "" ? [] : before.split("\n");
-  const b = after === "" ? [] : after.split("\n");
+  const a = linesOf(before);
+  const b = linesOf(after);
   if (a.length * b.length > MAX_CELLS) return [...a.map((text) => ({ kind: "del" as const, text })), ...b.map((text) => ({ kind: "add" as const, text }))];
   // longest common subsequence, from the end, so the walk below goes forward
   const width = b.length + 1;

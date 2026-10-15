@@ -317,6 +317,36 @@
   white-space: nowrap;
 }
 
+/* the session's mode, beside the model: the first word to give way when the pill is narrow. Its
+   shrink outweighs the name's by far, so the row takes its room before a letter of the name.
+   The pill's gap is spaced on both sides of every item, so a mode shrunk to nothing would leave
+   two gaps between the name and the level: the mode gives one back and draws it inside itself
+   instead, as content that shrinks away with it */
+.composer-mode {
+  flex: 0 10000 auto;
+  min-width: 0;
+  max-width: calc(12ch + var(--space-2));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  margin-inline-start: calc(-1 * var(--space-2));
+}
+
+.composer-mode::before {
+  content: "";
+  display: inline-block;
+  width: var(--space-2);
+}
+
+/* beside a mode the level does not shrink: flex would shave it by a fraction of a pixel along with
+   the mode, too little for fitStatus to measure yet enough to draw the level as an ellipsis. The
+   mode gives way first; past it the name is cut, and the level steps out whole */
+.composer-mode ~ .composer-reasoning {
+  flex-shrink: 0;
+}
+
 .composer-reasoning-dot {
   margin-right: var(--space-2);
 }

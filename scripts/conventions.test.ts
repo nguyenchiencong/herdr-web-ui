@@ -130,6 +130,7 @@ describe("demo transport", () => {
     "/api/devices": "Settings → Devices: the demo pairs no devices (listed when this guard was added)",
     "/api/devices/pair": "pairing a device: the demo is never locked, so the pairing form does not run",
     "/api/devices/pair/start": "Settings → Devices: the demo pairs no devices (listed when this guard was added)",
+    "/api/pane/background-output": "a background command's output: the demo's tasks carry no command and no output, so the browser never asks (listed when this guard was added)",
     "/api/pane/conversation/image": "an image in a chat turn: the demo's transcripts carry none (listed when this guard was added)",
     "/api/pane/conversation/tool-output": "a tool call's full output: not part of the demo (listed when this guard was added)",
     "/api/pane/image": "pasting an image: the demo stores no files (listed when this guard was added)",

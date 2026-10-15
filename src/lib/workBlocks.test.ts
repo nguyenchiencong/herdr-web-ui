@@ -1,11 +1,19 @@
 import { describe, expect, it } from "bun:test";
 
-import { formatWorkDuration, splitTurn, workFailed, workStartsOpen, workSummary } from "./workBlocks.ts";
+import { formatWorkDuration, splitTurn, toolCallsBefore, workFailed, workStartsOpen, workSummary } from "./workBlocks.ts";
 import type { ConversationPart } from "../../shared/protocol.ts";
 
 const tool = (name: string, summary = name): Extract<ConversationPart, { kind: "tool" }> => ({ kind: "tool", name, summary, input: "{}", output: "" });
 const text = (value: string): Extract<ConversationPart, { kind: "text" }> => ({ kind: "text", text: value });
 const thinking = (value: string): Extract<ConversationPart, { kind: "thinking" }> => ({ kind: "thinking", text: value });
+
+describe("toolCallsBefore", () => {
+  it("lists the tool calls before an index: not the prose, nor the call at the index", () => {
+    const parts: ConversationPart[] = [tool("Agent"), text("waiting"), thinking("hm"), tool("get_subagent_result")];
+    expect(toolCallsBefore(parts, 3)).toEqual([tool("Agent")]);
+    expect(toolCallsBefore(parts, 0)).toEqual([]);
+  });
+});
 
 describe("splitTurn", () => {
   it("folds every action and the narration between them into the work; the trailing prose is the answer", () => {
@@ -77,7 +85,13 @@ describe("workStartsOpen", () => {
 
 describe("workSummary", () => {
   it("counts by what the reader cares about, singular and plural", () => {
-    expect(workSummary([tool("Edit"), tool("Write"), tool("read"), tool("Bash"), tool("WebFetch")])).toBe("2 edits · 1 file read · 1 command · 1 other tool");
+    expect(workSummary([tool("Edit"), tool("Write"), tool("read"), tool("Bash"), tool("WebFetch")])).toBe("2 edits · 1 file read · 1 command · 1 web request");
+  });
+
+  it("counts subagents, searches and web requests under their own names, in the order a reader cares about", () => {
+    expect(workSummary([tool("Agent"), tool("get_subagent_result"), tool("bash")])).toBe("2 subagents · 1 command");
+    expect(workSummary([tool("rg_grep"), tool("web_search"), tool("bg_run"), tool("codemode")])).toBe("2 commands · 1 search · 1 web request");
+    expect(workSummary([tool("steer_subagent"), tool("Edit")])).toBe("1 subagent · 1 edit");
   });
 
   it("is empty for reasoning and prose alone", () => {

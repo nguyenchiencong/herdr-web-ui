@@ -13,7 +13,7 @@ export function useSkillMatcher(paneId: string): SkillMatcher | null {
   useEffect(() => {
     let live = true;
     cachedPaneCommands(paneId, machineId, fetchPaneCommands).then(
-      (commands) => { if (live) setLoaded({ key, matcher: createSkillMatcher(commands) }); },
+      (list) => { if (live) setLoaded({ key, matcher: createSkillMatcher(list.commands) }); },
       () => { if (live) setLoaded({ key, matcher: null }); },
     );
     return () => { live = false; };
