@@ -12,6 +12,8 @@ bun run dev      # Vite on :5173, proxies /api and /ws
 
 `bun run server` and `bun run dev` never update themselves; only `bun run start` and the plugin run the update supervisor.
 
+The personal `hweb` helper, which starts, stops, reports on and updates the plugin's server from a shell, installs its launchers into `~/bin` with `bun run hweb:install`; `bun run hweb:uninstall` removes them. Its commands are in the [hweb section](../README.md#hweb) of the README.
+
 ## Checks
 
 Production builds create Brotli (`.br`) and gzip (`.gz`) sidecars for JavaScript and CSS under
@@ -659,7 +661,7 @@ input regression matrix.
 | [`src/`](../src/) | React UI: chat, terminal, composer, sidebar, settings |
 | [`server/`](../server/) | API, WebSockets, transcript readers, push, PTY bridge, remote PCs and updater |
 | [`shared/`](../shared/) | HTTP/WebSocket contract and generated herdr types |
-| [`scripts/`](../scripts/) | Plugin lifecycle, type generation, remote bundles, README media, the film and browser checks |
+| [`scripts/`](../scripts/) | Plugin lifecycle, the hweb helper and its installer, type generation, remote bundles, README media, the film and browser checks |
 | [`public/`](../public/) | PWA manifest, service worker and icons |
 | [`docs/`](.) | Remote PCs, updates, flow control, chat audit, brand assets and README media (`docs/media/`) |
 | [`site/`](../site/) | The website, built by `scripts/build-site.ts` and deployed by GitHub Pages |

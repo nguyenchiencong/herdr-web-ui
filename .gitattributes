@@ -1,0 +1,3 @@
+# The helper's bash must keep LF under core.autocrlf=true, and cmd needs CRLF in its .cmd files.
+scripts/hweb text eol=lf
+scripts/hweb.cmd text eol=crlf

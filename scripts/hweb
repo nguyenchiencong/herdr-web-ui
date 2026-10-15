@@ -1,0 +1,358 @@
+#!/usr/bin/env bash
+# hweb: start, stop, restart, status, update and log for the locally linked herdr web UI.
+# It serves the checkout it lives in (symlinks followed), so it runs from any directory. Git Bash
+# runs it directly; cmd and PowerShell use scripts/hweb.cmd. `bun run hweb:install` puts launchers
+# for both on PATH. Windows is the tested platform (README: hweb).
+# Dependencies: Bun, curl, git and coreutils (Git for Windows on Windows); herdr on PATH for the
+# lifecycle commands. Interactive/on-demand use only; lifecycle commands affect the live local server.
+set -euo pipefail
+
+PLUGIN='devswha.herdr-web-ui'
+DEFAULT_PORT=7317
+START_SECONDS=30
+STOP_SECONDS=15
+# Seed from the existing installation at script creation (node_modules newer than
+# package.json and bun.lock). Subsequent successful installs persist a new hash.
+INITIAL_FINGERPRINT='6ff1cd50d70b8079a7b9e464d3f3417aee22570c'
+
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) WINDOWS=1 ;;
+    *) WINDOWS=0 ;;
+esac
+if (( WINDOWS )); then
+    # Native cmd/PowerShell may not include Git's Unix tools in PATH.
+    export PATH="/mingw64/bin:/usr/bin:$PATH"
+    GIT_HINT='Git for Windows'
+    ACTION_SUFFIX='-windows'
+    LOCAL_DATA="${LOCALAPPDATA:-$HOME/AppData/Local}"
+    LOCAL_DATA="${LOCAL_DATA//\\//}"
+    STATE_DIR="$LOCAL_DATA/hweb"
+    SERVER_LOG="$LOCAL_DATA/herdr/plugins/$PLUGIN/server.log"
+else
+    # The plain actions here. Herdr's own state directory is not documented: the log is read where
+    # plugin.ts writes it without herdr's environment. Not verified on macOS or Linux.
+    GIT_HINT='your system packages'
+    ACTION_SUFFIX=''
+    STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/hweb"
+    SERVER_LOG="${HERDR_PLUGIN_STATE_DIR:-$HOME/.local/state/herdr-web-ui}/server.log"
+fi
+INSTALL_STAMP="$STATE_DIR/dependencies.fingerprint"
+
+LOCK_HELD=0
+WORK_FILE=''
+HEALTH=''
+DRY_RUN=0
+SETTINGS_DIR=''
+WEB_HOST=''
+WEB_PORT=''
+BASE_URL=''
+DISPLAY_URL=''
+
+usage() {
+    cat <<'HELP'
+Usage: hweb [--dry-run] <command>
+  start    Start and wait up to 30s for health
+  stop     Stop and wait up to 15s for health to disappear
+  restart  Stop, then start
+  status   Show running revision vs checkout HEAD
+  update   Install only if needed, build, then restart (no git pull)
+  log      Show the last 40 server log lines
+  help     Show this help (-h / --help also work)
+--dry-run prints the plan for start/stop/restart/update without changes.
+HELP
+}
+
+error() { printf '[%s] ERROR: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
+die() { error "$*"; exit 1; }
+need() {
+    command -v "$1" >/dev/null 2>&1 || die "Missing '$1'; install $2 and ensure it is on PATH."
+}
+cleanup() {
+    if [[ -n "$WORK_FILE" ]]; then rm -f -- "$WORK_FILE"; fi
+    if (( LOCK_HELD )); then rmdir -- "$STATE_DIR/operation.lock" 2>/dev/null || true; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'rc=$?; error "Command failed (exit $rc, line $LINENO)."; exit "$rc"' ERR
+
+# The directory part of a path written with forward slashes. dirname is not used: it misreads
+# Windows paths, and a bare file name has no directory part.
+dir_of() {
+    local dir="${1%/*}"
+    if [[ "$1" == */* ]]; then printf '%s' "${dir:-/}"; else printf '.'; fi
+}
+
+# This file's real location, with symlinks followed, names the checkout: a launcher or link
+# elsewhere still finds it.
+script="${BASH_SOURCE[0]//\\//}"
+while [[ -L "$script" ]]; do
+    target="$(readlink "$script")"
+    case "$target" in
+        /*|[A-Za-z]:/*) script="$target" ;;
+        *) script="$(dir_of "$script")/$target" ;;
+    esac
+done
+SCRIPT_DIR="$(cd -P -- "$(dir_of "$script")" && pwd -P)"
+CHECKOUT="$(cd -P -- "$SCRIPT_DIR/.." && pwd -P)"
+if (( WINDOWS )); then CHECKOUT="$(cygpath -m "$CHECKOUT")"; fi
+
+show_log() {
+    local count="$1"
+    if [[ -r "$SERVER_LOG" ]]; then
+        tail -n "$count" -- "$SERVER_LOG"
+    else
+        printf 'No readable server log: %s\n' "$SERVER_LOG" >&2
+    fi
+}
+
+# A KEY=value setting from FILE, read as plugin.ts reads its settings: blank and # lines are
+# skipped, the value's surrounding spaces and one pair of quotes are dropped, and the last line
+# for KEY wins. Fails, printing nothing, when FILE does not set KEY.
+setting() {
+    local file="$1" key="$2" line name value result='' found=1
+    [[ -r "$file" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        if [[ -z "$line" || "$line" == \#* || "$line" != *=* ]]; then continue; fi
+        name="${line%%=*}"
+        name="${name%"${name##*[![:space:]]}"}"
+        if [[ "$name" != "$key" ]]; then continue; fi
+        value="${line#*=}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        case "$value" in \"*) value="${value#\"}" ;; \'*) value="${value#\'}" ;; esac
+        case "$value" in *\") value="${value%\"}" ;; *\') value="${value%\'}" ;; esac
+        result="$value"
+        found=0
+    done < "$file"
+    printf '%s' "$result"
+    return "$found"
+}
+
+# The plugin's config directory: HERDR_PLUGIN_CONFIG_DIR, else herdr's own answer, else the
+# Windows location herdr uses (%APPDATA%\herdr\plugins\config\<id>) when neither holds a settings file.
+settings_dir() {
+    local dir="${HERDR_PLUGIN_CONFIG_DIR:-}"
+    if [[ -z "$dir" ]] && command -v herdr >/dev/null 2>&1; then
+        dir="$(herdr plugin config-dir "$PLUGIN" 2>/dev/null || true)"
+    fi
+    dir="${dir//$'\r'/}"
+    if [[ ( -z "$dir" || ( ! -f "$dir/env" && ! -f "$dir/.env" ) ) && -n "${APPDATA:-}" ]]; then
+        dir="${APPDATA//\\//}/herdr/plugins/config/$PLUGIN"
+    fi
+    printf '%s' "$dir"
+}
+
+# A setting as the plugin sees it: .env overrides env in the config directory. Fails when neither sets KEY.
+config_value() {
+    local key="$1" value
+    if [[ -z "$SETTINGS_DIR" ]]; then return 1; fi
+    if value="$(setting "$SETTINGS_DIR/.env" "$key")"; then printf '%s' "$value"; return 0; fi
+    if value="$(setting "$SETTINGS_DIR/env" "$key")"; then printf '%s' "$value"; return 0; fi
+    return 1
+}
+
+valid_port() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
+
+# The port a start settled on when the default could not be opened (plugin-port, in the app's own
+# state directory, as plugin.ts writes it), else the default.
+saved_port() {
+    local file="${HERDR_WEB_STATE_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr-web-ui}/plugin-port"
+    local saved=''
+    if [[ -r "$file" ]]; then IFS= read -r saved < "$file" || true; fi
+    saved="${saved//[[:space:]]/}"
+    if valid_port "$saved"; then printf '%s' "$((10#$saved))"; else printf '%s' "$DEFAULT_PORT"; fi
+}
+
+# The settings the plugin runs with. PORT: the setting, else the port a start had to choose, else
+# the default, as plugin.ts settles it. Health checks always use 127.0.0.1; the status lines show
+# HOST, with 0.0.0.0 shown as 127.0.0.1, an address that works on this PC.
+load_config() {
+    local shown
+    SETTINGS_DIR="$(settings_dir)"
+    WEB_HOST="$(config_value HOST || true)"
+    WEB_HOST="${WEB_HOST:-127.0.0.1}"
+    WEB_PORT="$(config_value PORT || true)"
+    if [[ -z "$WEB_PORT" ]]; then
+        WEB_PORT="$(saved_port)"
+    elif valid_port "$WEB_PORT"; then
+        WEB_PORT="$((10#$WEB_PORT))"
+    else
+        die "PORT in the plugin settings ($SETTINGS_DIR) must be a number from 1 to 65535, not '$WEB_PORT'."
+    fi
+    shown="$WEB_HOST"
+    if [[ "$WEB_HOST" == 0.0.0.0 ]]; then shown=127.0.0.1; fi
+    BASE_URL="http://127.0.0.1:$WEB_PORT"
+    DISPLAY_URL="http://$shown:$WEB_PORT"
+}
+
+# Return transport/HTTP health separately from parsing, so a parsing failure never
+# makes stop mistakenly declare that an answering server has stopped.
+probe_health() {
+    HEALTH="$(curl --noproxy '*' --fail --silent --max-time "${1:-3}" "$BASE_URL/api/health" 2>/dev/null)"
+}
+revision() {
+    printf '%s' "$HEALTH" | bun -e '
+        try {
+            const h = JSON.parse(await Bun.stdin.text());
+            const r = h.web_ui?.revision;
+            console.log(typeof r === "string" && /^[a-f0-9]{7,40}$/i.test(r) ? r : "unknown");
+        } catch { console.log("unknown"); }
+    '
+}
+
+invoke() {
+    local action="$1"
+    # Herdr action envelopes are intentionally hidden, including on failure.
+    if ! herdr plugin action invoke "$PLUGIN.$action$ACTION_SUFFIX" >"$WORK_FILE" 2>&1; then
+        error "Could not invoke $action for $PLUGIN; check herdr is running."
+        show_log 15
+        exit 1
+    fi
+}
+
+start_server() {
+    local deadline rev
+    invoke start
+    deadline=$((SECONDS + START_SECONDS))
+    while (( SECONDS < deadline )); do
+        if probe_health 1; then
+            rev="$(revision)"
+            if [[ "$rev" != unknown ]]; then
+                printf 'running at %s (rev %.7s)\n' "$DISPLAY_URL" "$rev"
+                return
+            fi
+        fi
+        if (( SECONDS < deadline )); then sleep 1; fi
+    done
+    error "Start failed: no valid health response within ${START_SECONDS}s. Last 15 log lines:"
+    show_log 15
+    exit 1
+}
+
+stop_server() {
+    local deadline
+    invoke stop
+    deadline=$((SECONDS + STOP_SECONDS))
+    while (( SECONDS < deadline )); do
+        if probe_health 1; then
+            if (( SECONDS < deadline )); then sleep 1; fi
+        else
+            printf 'stopped (port %s no longer answers health)\n' "$WEB_PORT"
+            return
+        fi
+    done
+    error "Stop failed: health still answers after ${STOP_SECONDS}s. Last 15 log lines:"
+    show_log 15
+    exit 1
+}
+
+status() {
+    local head rev
+    head="$(git -C "$CHECKOUT" rev-parse HEAD)"
+    if probe_health; then
+        rev="$(revision)"
+        printf 'running at %s (rev %.7s); checkout %.7s' "$DISPLAY_URL" "$rev" "$head"
+        if [[ "$rev" == unknown ]]; then
+            printf ' - running revision unavailable\n'
+        elif [[ "$rev" != "$head" ]]; then
+            printf ' - rebuild needed\n'
+        else
+            printf ' - up to date\n'
+        fi
+    else
+        printf 'not running; checkout %.7s\n' "$head"
+    fi
+}
+
+dependency_fingerprint() {
+    git hash-object --no-filters "$CHECKOUT/package.json" "$CHECKOUT/bun.lock" |
+        git hash-object --stdin
+}
+
+update() {
+    local fingerprint previous
+    [[ -f "$CHECKOUT/package.json" && -f "$CHECKOUT/bun.lock" ]] ||
+        die 'Checkout must contain package.json and bun.lock.'
+    fingerprint="$(dependency_fingerprint)"
+    previous="$INITIAL_FINGERPRINT"
+    if [[ -f "$INSTALL_STAMP" ]]; then previous="$(cat "$INSTALL_STAMP")"; fi
+    if [[ ! -d "$CHECKOUT/node_modules" || "$fingerprint" != "$previous" ]]; then
+        printf 'installing dependencies...\n'
+        # A failed install may leave partial node_modules: force the next run to retry.
+        printf 'install-incomplete\n' >"$INSTALL_STAMP"
+        # Retry manually on network errors; never restart after a failed install/build.
+        if ! (cd "$CHECKOUT" && bun install) >"$WORK_FILE" 2>&1; then
+            error 'bun install failed; server left untouched. Last 15 output lines:'
+            tail -n 15 -- "$WORK_FILE" >&2
+            exit 1
+        fi
+        # Bun may update the lockfile, so record inputs after successful installation.
+        dependency_fingerprint >"$INSTALL_STAMP"
+    else
+        printf 'dependencies unchanged; skipping install\n'
+    fi
+    printf 'building...\n'
+    if ! (cd "$CHECKOUT" && bun run build) >"$WORK_FILE" 2>&1; then
+        error 'Build failed; server left untouched. Last 15 output lines:'
+        tail -n 15 -- "$WORK_FILE" >&2
+        exit 1
+    fi
+    stop_server
+    start_server
+}
+
+# Validate all arguments before any side effects.
+COMMAND=''
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=1 ;;
+        -h|--help) COMMAND=help ;;
+        start|stop|restart|status|update|log|help)
+            [[ -z "$COMMAND" ]] || { error 'Supply exactly one command.'; usage >&2; exit 2; }
+            COMMAND="$arg" ;;
+        *) error "Unknown argument: $arg"; usage >&2; exit 2 ;;
+    esac
+done
+COMMAND="${COMMAND:-help}"
+if [[ "$COMMAND" == help ]]; then usage; exit 0; fi
+if (( DRY_RUN )); then
+    case "$COMMAND" in
+        start) load_config; printf 'Would invoke start and wait up to %ss for %s.\n' "$START_SECONDS" "$BASE_URL" ;;
+        stop) printf 'Would invoke stop and wait up to %ss for health to disappear.\n' "$STOP_SECONDS" ;;
+        restart) printf 'Would stop, wait for shutdown, then start and wait for health.\n' ;;
+        update) printf 'Would install only if inputs changed/node_modules missing, build in "%s", then restart; no git pull.\n' "$CHECKOUT" ;;
+        *) die '--dry-run is only for start/stop/restart/update.' ;;
+    esac
+    exit 0
+fi
+
+need tail "$GIT_HINT"
+if [[ "$COMMAND" == log ]]; then show_log 40; exit 0; fi
+load_config
+need curl "$GIT_HINT"
+need bun 'Bun'
+if [[ "$COMMAND" == status || "$COMMAND" == update ]]; then
+    need git "$GIT_HINT"
+    [[ -d "$CHECKOUT" ]] || die "Checkout not found: $CHECKOUT"
+fi
+if [[ "$COMMAND" == status ]]; then status; exit 0; fi
+need herdr 'herdr'
+need mktemp "$GIT_HINT"
+
+# Serialize lifecycle operations. A stale lock after forced termination must be
+# removed manually only after confirming no other hweb lifecycle command is active.
+mkdir -p -- "$STATE_DIR"
+if ! mkdir -- "$STATE_DIR/operation.lock" 2>/dev/null; then
+    die "Another hweb operation is active (or stale lock: $STATE_DIR/operation.lock)."
+fi
+LOCK_HELD=1
+WORK_FILE="$(mktemp "$STATE_DIR/output.XXXXXX")"
+case "$COMMAND" in
+    start) start_server ;;
+    stop) stop_server ;;
+    restart) stop_server; start_server ;;
+    update) update ;;
+esac

@@ -23,7 +23,9 @@
     "generate:types": "bun run scripts/generate-protocol-types.ts",
     "build:remote": "bun run scripts/build-remote-bundle.ts",
     "build:site": "bun scripts/build-site.ts",
-    "test:ssh": "bun run scripts/ssh-integration.ts"
+    "test:ssh": "bun run scripts/ssh-integration.ts",
+    "hweb:install": "bun scripts/install-hweb.ts",
+    "hweb:uninstall": "bun scripts/install-hweb.ts --uninstall"
   },
   "dependencies": {
     "@legendapp/list": "3.3.5",

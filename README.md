@@ -27,7 +27,13 @@ herdr plugin link "$PWD" --enabled
 
 ## hweb
 
-If you have the `hweb` helper (`~\bin\hweb`, outside this repo), it runs from Git Bash, PowerShell and cmd (`hweb.cmd` calls Git for Windows' bash). `start`, `stop`, `restart` and `update` need herdr on PATH.
+`hweb` is a personal helper for this checkout, run from Git Bash, PowerShell or cmd (`hweb.cmd` calls Git for Windows' bash). Its launchers live outside the repo, in `~\bin` by default. Install them from the checkout, with Git for Windows and Bun on PATH:
+
+```powershell
+bun run hweb:install   # writes hweb and hweb.cmd into ~\bin; --dir <folder> chooses another
+```
+
+The installer moves an older `hweb` aside before replacing it, never overwrites another file without `--force`, and prints the line that adds its folder to PATH; it never changes PATH itself. `bun run hweb:uninstall` removes the launchers. `start`, `stop`, `restart` and `update` need herdr on PATH. Windows is the tested platform: on macOS and Linux the same commands use the plain `start` and `stop` actions, which is untested.
 
 | Command | What it does |
 | --- | --- |
@@ -40,7 +46,7 @@ If you have the `hweb` helper (`~\bin\hweb`, outside this repo), it runs from Gi
 
 `hweb help` lists them. `--dry-run` before `start`, `stop`, `restart` or `update` prints the plan and changes nothing. A failed install or build leaves the running server alone.
 
-Without the helper: `herdr plugin action invoke devswha.herdr-web-ui.start-windows` (or `stop-windows`, `status-windows`), and `curl http://127.0.0.1:7317/api/health` (its `web_ui.revision` is the running commit). The script hardcodes the checkout path and port 7317 at its top. A stale `%LOCALAPPDATA%\hweb\operation.lock` blocks it: delete it only when no hweb command is running.
+Without the helper: `herdr plugin action invoke devswha.herdr-web-ui.start-windows` (or `stop-windows`, `status-windows`), and `curl http://127.0.0.1:7317/api/health` (its `web_ui.revision` is the running commit). hweb finds the checkout from its own location and reads `PORT` and `HOST` from the plugin's settings (`herdr plugin config-dir devswha.herdr-web-ui`), so it follows a changed port. A stale `%LOCALAPPDATA%\hweb\operation.lock` blocks it: delete it only when no hweb command is running.
 
 ## sync with upstream
 
