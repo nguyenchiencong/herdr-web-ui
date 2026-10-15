@@ -79,6 +79,7 @@ try {
         const machine = box(".machine-group")!;
         const list = box(".machine-list")!;
         const agents = box(".agents-sidebar")!;
+        const agentsBottom = agents.bottom;
         const contents = document.querySelector<HTMLElement>(".agent-list-contents")!;
         const footer = box(".sidebar-footer")!;
         return {
@@ -88,13 +89,16 @@ try {
           agentsTop: agents.top,
           agentsHeight: agents.height,
           contentsOverflow: getComputedStyle(contents).overflowY,
+          agentsBottom,
+          footerTop: footer.top,
           footerBottom: footer.bottom,
           shellBottom: shell.bottom,
         };
       });
       assert.ok(metrics.agentsTop - metrics.machineBottom <= spacing, `${label} folded PC gap is ${metrics.agentsTop - metrics.machineBottom}px`);
       assert.ok(metrics.listBottom - metrics.machineBottom <= spacing, `${label} folded list padding is ${metrics.listBottom - metrics.machineBottom}px`);
-      assert.ok(metrics.agentsHeight <= metrics.shellHeight / 2 + 1, `${label} Agents keeps its half-sidebar cap`);
+      if (empty) assert.ok(metrics.agentsHeight <= metrics.shellHeight / 2 + 1, `${label} empty Agents keeps to its words`);
+      else assert.ok(Math.abs(metrics.footerTop - metrics.agentsBottom) <= 1, `${label} Agents fills down to the footer (gap ${metrics.footerTop - metrics.agentsBottom}px)`);
       assert.equal(metrics.contentsOverflow, "auto", `${label} Agents keeps scroll ownership`);
       assert.equal(Math.round(metrics.footerBottom), Math.round(metrics.shellBottom), `${label} footer stays at the bottom`);
       assert.deepEqual(await page.locator(".agents-sidebar .agent-title").allTextContents(), before, `${label} agent order is unchanged`);

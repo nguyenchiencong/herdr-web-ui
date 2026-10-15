@@ -1,5 +1,5 @@
-/* Agents takes the height of its rows, at most half the sidebar, docked above the footer; the
-   workspace list has the rest. Parted from it by space, not a rule. */
+/* Agents takes the height of its rows, at most half the sidebar while a PC's workspaces are open,
+   docked above the footer; the workspace list has the rest. Parted from it by space, not a rule. */
 .agents-sidebar {
   display: flex;
   flex: 0 1 auto;
@@ -12,9 +12,11 @@
 .agents-sidebar.is-collapsed,
 .agents-sidebar.is-empty { flex: 0 0 auto; }
 
-/* A visible Agents list fills the space released by folded PC groups, up to its existing cap. */
+/* With every PC folded, a visible Agents list fills all the space down to the footer and scrolls
+   only past it: the half cap is only there to share the column with open workspaces. */
 .sidebar-shell:not(:has(.machine-list .machine-workspaces)):has(.agents-sidebar:not(.is-collapsed):not(.is-empty)) .agents-sidebar {
   flex: 1 1 auto;
+  max-height: none;
 }
 
 /* positioned: a row's visually hidden label is absolute, and must not size the page instead */
