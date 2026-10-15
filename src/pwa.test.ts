@@ -76,12 +76,23 @@ function serviceWorker(stored: Record<string, Record<string, string | Kept>>, so
   /** `ready` is awaited by every write: a test replaces it to hold the cache back. */
   const disk = { ready: Promise.resolve() as Promise<void> };
   /** `gone`: files the server no longer has, answered as `goneAs` says (a 404, or the shell as servers before it did) */
-  const network = { online: true, shell: "shell", status: 200, fetched: [] as string[], gone: new Set<string>(), goneAs: "404" as "404" | "shell" };
-  const fetch = async (request: WorkerRequest) => {
+  // `drops`: attempts that fail while online; `gateway`: page answers that are a 502 first; `navigationCaches`: the cache mode of each page request
+  const network = { online: true, shell: "shell", status: 200, fetched: [] as string[], gone: new Set<string>(), goneAs: "404" as "404" | "shell", drops: 0, gateway: 0, navigationCaches: [] as (string | undefined)[] };
+  const fetch = async (request: WorkerRequest, init?: { cache?: string }) => {
+    if (request.mode === "navigate") network.navigationCaches.push(init?.cache);
     if (!network.online) throw new TypeError("Failed to fetch");
+    if (network.drops > 0) {
+      network.drops -= 1;
+      throw new TypeError("Failed to fetch");
+    }
     network.fetched.push(keyOf(request));
     const page = () => new Response(network.shell, { status: network.status, headers: { "content-type": "text/html; charset=utf-8" } });
-    const response = request.mode === "navigate" ? page()
+    const navigation = () => {
+      const gateway = network.gateway > 0;
+      if (gateway) network.gateway -= 1;
+      return new Response(network.shell, { status: gateway ? 502 : network.status, headers: { "content-type": "text/html; charset=utf-8" } });
+    };
+    const response = request.mode === "navigate" ? navigation()
       : !network.gone.has(keyOf(request)) ? new Response(`network ${keyOf(request)}`)
       : network.goneAs === "shell" ? page() : new Response(null, { status: 404 });
     // a same-origin answer, which is all the worker keeps
@@ -90,7 +101,10 @@ function serviceWorker(stored: Record<string, Record<string, string | Kept>>, so
   };
   const listeners = new Map<string, (event: unknown) => void>();
   const self = { location: { origin }, clients: { claim: async () => undefined }, skipWaiting: () => undefined, addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(type, listener) };
-  new Function("self", "caches", "fetch", source)(self, caches, fetch);
+  // the worker's online state is the network's, and its retries do not sleep: the tests stay quick
+  const navigatorOfTheWorker = { get onLine() { return network.online; } };
+  const instantTimeout = (callback: () => void) => { callback(); return 0; };
+  new Function("self", "caches", "fetch", "navigator", "setTimeout", source)(self, caches, fetch, navigatorOfTheWorker, instantTimeout);
   /** The answer as the page gets it, and `kept`: everything the worker asked to stay alive for. */
   const fire = (type: string, event: Record<string, unknown> = {}): { answer: Promise<Response> | undefined; kept: () => Promise<void> } => {
     let answer: Promise<Response> | undefined;
@@ -246,6 +260,52 @@ describe("a file the server no longer has", () => {
       stampServiceWorker(sw, "0123456789ab"));
     await worker.update();
     expect(await worker.get("/assets/katex-old.js")).toBe("network /assets/katex-old.js");
+  });
+});
+
+describe("a page the server did not answer", () => {
+  const old = () => ({ "herdr-web-ui-v3-ram": { "/": "old shell" } });
+
+  it("is asked for again at once when the connection drops while the device is online", async () => {
+    const worker = serviceWorker(old());
+    worker.network.shell = "new shell";
+    worker.network.drops = 1;
+    expect(await worker.navigate("/?pane=p_1")).toBe("new shell");
+    expect(worker.network.navigationCaches).toEqual(["no-store", "no-store"]);
+  });
+
+  it("is asked for again while a gateway answers 502, and the answer that comes after stands", async () => {
+    const worker = serviceWorker(old());
+    worker.network.shell = "new shell";
+    worker.network.gateway = 2;
+    expect(await worker.navigate()).toBe("new shell");
+    expect(worker.network.navigationCaches).toEqual(["no-store", "no-store", "no-store"]);
+  });
+
+  it("is answered with the gateway's 5xx once the retries are spent, not with the cached shell", async () => {
+    const worker = serviceWorker(old());
+    await worker.update();
+    worker.network.shell = "new shell";
+    worker.network.gateway = 10;
+    expect(await worker.navigate()).toBe("new shell");
+    expect(worker.network.navigationCaches).toHaveLength(3);
+  });
+
+  it("is answered from the shell cached before once the retries are spent", async () => {
+    const worker = serviceWorker(old());
+    await worker.update();
+    worker.network.shell = "new shell";
+    worker.network.drops = 10;
+    expect(await worker.navigate()).toBe("old shell");
+    expect(worker.network.navigationCaches).toHaveLength(3);
+  });
+
+  it("is not asked again while offline: the shell cached before answers at once", async () => {
+    const worker = serviceWorker(old());
+    await worker.update();
+    worker.network.online = false;
+    expect(await worker.navigate()).toBe("old shell");
+    expect(worker.network.navigationCaches).toHaveLength(1);
   });
 });
 

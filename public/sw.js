@@ -1,7 +1,8 @@
-// Service worker for herdr web ui. Policy: navigations are network-first (so a
-// fresh build always wins when online) falling back to the cached shell when
-// offline; static assets (hashed bundles, icons, favicons) are cache-first since
-// they are content-addressed or rarely change. The web manifest is not: its URL
+// Service worker for herdr web ui. Policy: navigations are network-first, bypassing the HTTP
+// cache so a fresh build always wins when online. A page that fails to arrive, or a gateway's 5xx,
+// is asked again briefly; a network failure that persists falls back to the cached shell.
+// Static assets (hashed bundles, icons, favicons) are cache-first since they are content-addressed
+// or rarely change. The web manifest is not: its URL
 // never changes and the browser rereads it to update the installed app, so a
 // cached copy would pin every install to its first manifest. API and websocket
 // traffic is never intercepted so live workspace data is always fresh.
@@ -126,6 +127,28 @@ async function keepShell(response) {
   await Promise.all(names.map((name) => caches.delete(name)));
 }
 
+/** The waits before each further try of a page the server did not answer: a dropped connection, a server or gateway restarting. */
+const PAGE_RETRY_MS = [300, 900];
+
+/**
+ * A page from the server, past the HTTP cache: a reload must get this server's shell, never a copy
+ * an older build left there. While the device is online, a network error or a 5xx (a gateway whose
+ * server is restarting) is asked again. A network error that persists falls back to the cached shell, and a 5xx that
+ * persists is the answer. Offline the fallback answers at once.
+ */
+async function fetchPage(request) {
+  for (let attempt = 0; ; attempt += 1) {
+    const last = attempt >= PAGE_RETRY_MS.length;
+    try {
+      const response = await fetch(request, { cache: "no-store" });
+      if (response.status < 500 || last) return response;
+    } catch (err) {
+      if (last || navigator.onLine === false) throw err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, PAGE_RETRY_MS[attempt]));
+  }
+}
+
 /** The shell to start from offline: this cache's, else the one a cache not yet deleted holds. */
 async function cachedShell() {
   const cache = await caches.open(CACHE);
@@ -145,7 +168,7 @@ self.addEventListener("fetch", (event) => {
       (async () => {
         let response;
         try {
-          response = await fetch(request);
+          response = await fetchPage(request);
         } catch (err) {
           return (await cachedShell()) || Response.error();
         }
