@@ -558,25 +558,20 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   .sidebar-footer-action:hover:not(:disabled) { background: var(--side-hover); }
 }
 
-/* Settings keeps the room the plan meters beside it leave */
-.sidebar-footer-row {
+/* Settings keeps the room the plan meters beside it leave; the install row shares the grid, with its close beside the action */
+.sidebar-footer-row,
+.sidebar-install-row {
   display: flex;
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
 }
 
-.sidebar-footer-row > .sidebar-footer-action {
+.sidebar-footer-row > .sidebar-footer-action,
+.sidebar-install-row > .sidebar-footer-action {
   flex: 1 1 auto;
   width: auto;
   min-width: 0;
-}
-
-.sidebar-install-help {
-  margin: 0;
-  padding: 0 var(--space-2) var(--space-1) var(--side-box);
-  color: var(--text-dim);
-  font-size: var(--fs-xs);
 }
 
 @media (pointer: coarse) {

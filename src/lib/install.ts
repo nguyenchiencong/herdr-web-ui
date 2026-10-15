@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { t } from "./i18n.ts";
 
 interface InstallChoice {
@@ -78,9 +78,40 @@ function currentInstallHelp(): string {
   return installHelp({ userAgent: navigator.userAgent, secure: window.isSecureContext, maxTouchPoints: navigator.maxTouchPoints ?? 0 });
 }
 
+const DISMISSED_KEY = "herdr-web-ui:install-dismissed";
+
+/** Whether this device closed the sidebar's Install app button. */
+export function readInstallDismissed(storage?: Pick<Storage, "getItem">): boolean {
+  try { return (storage ?? window.localStorage).getItem(DISMISSED_KEY) === "1"; } catch { return false; }
+}
+
+export function writeInstallDismissed(storage?: Pick<Storage, "setItem">): void {
+  try { (storage ?? window.localStorage).setItem(DISMISSED_KEY, "1"); } catch { /* storage blocked: closed until the page reloads */ }
+}
+
+/** Tells `listener` when another tab of this device closes the button; returns the unsubscribe. */
+function watchInstallDismissed(listener: (dismissed: boolean) => void): () => void {
+  const onStorage = (event: StorageEvent) => { if (event.key === DISMISSED_KEY || event.key === null) listener(readInstallDismissed()); };
+  window.addEventListener("storage", onStorage);
+  return () => window.removeEventListener("storage", onStorage);
+}
+
+/**
+ * Whether the sidebar offers its Install app button: only for a one-tap install (a captured prompt),
+ * while the app is not installed yet and this device has not closed the button. Where there is no
+ * prompt (iOS, plain HTTP, Firefox), Settings says how to install instead.
+ */
+export function showInstallButton({ installed, canInstall, dismissed }: Pick<InstallPromptState, "installed" | "canInstall" | "dismissed">): boolean {
+  return canInstall && !installed && !dismissed;
+}
+
 export interface InstallPromptState {
   canInstall: boolean;
   installed: boolean;
+  /** closed on this device from the sidebar; Settings still offers the install */
+  dismissed: boolean;
+  /** closes the sidebar's button on this device, for good */
+  dismiss(): void;
   install(): Promise<void>;
   /** what to tell the user when there is no prompt to show */
   help: string;
@@ -88,6 +119,9 @@ export interface InstallPromptState {
 
 export function useInstallPrompt(): InstallPromptState {
   useSyncExternalStore(subscribe, snapshot, snapshot);
+  const [dismissed, setDismissed] = useState(readInstallDismissed);
+  // subscribed first, then read: a dismissal in another tab between the first read and the subscription is not lost
+  useEffect(() => { const stop = watchInstallDismissed(setDismissed); setDismissed(readInstallDismissed()); return stop; }, []);
   const installed = isStandalone();
   const install = useCallback(async (): Promise<void> => {
     const prompt = pendingPrompt;
@@ -97,5 +131,9 @@ export function useInstallPrompt(): InstallPromptState {
     if (pendingPrompt === prompt) pendingPrompt = null;
     emitChange();
   }, []);
-  return { canInstall: pendingPrompt !== null && !installed, installed, install, help: currentInstallHelp() };
+  const dismiss = useCallback((): void => {
+    writeInstallDismissed();
+    setDismissed(true);
+  }, []);
+  return { canInstall: pendingPrompt !== null && !installed, installed, dismissed, dismiss, install, help: currentInstallHelp() };
 }

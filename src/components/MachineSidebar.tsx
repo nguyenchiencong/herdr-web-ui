@@ -6,7 +6,7 @@ import { answerMachineSetup, machineRequest } from "../lib/api.ts";
 import { describeProgress } from "../lib/bridgeProgress.ts";
 import { keepDismissed, noticeKey, readDismissed, waitingMachines, writeDismissed } from "../lib/machineNotice.ts";
 import type { AppActions } from "../lib/actions.ts";
-import { useInstallPrompt } from "../lib/install.ts";
+import { showInstallButton, useInstallPrompt } from "../lib/install.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import { AgentSidebar } from "./AgentSidebar.tsx";
 import { SidebarActivityProvider, useSidebarActivityState } from "../lib/sidebarActivity.tsx";
@@ -26,8 +26,7 @@ export const STATE_WORD: Readonly<Record<MachineState, string>> = {
 interface Props { machines: Machine[]; selectedMachineId: string; selectedPaneId: string | null; actions: AppActions; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void }
 export function MachineSidebar(props: Props) {
   const t = useT();
-  const { canInstall, installed, install, help } = useInstallPrompt();
-  const [installHelpOpen, setInstallHelpOpen] = useState(false);
+  const { canInstall, installed, install, dismissed, dismiss } = useInstallPrompt();
   // both lists draw from it: live counters per PC (lib/sidebarActivity.tsx)
   const activity = useSidebarActivityState(props.machines);
   // no top bar: a workspace starts from its PC's header, and Add PC lives in Settings → Remote PCs
@@ -38,9 +37,11 @@ export function MachineSidebar(props: Props) {
     </div>
     <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} onSelect={props.onSelect} />
     <footer className="sidebar-footer">
-      {/* browsers without an install prompt (iOS, plain HTTP) get the steps instead */}
-      {!installed && <button className="btn btn-ghost sidebar-footer-action" aria-expanded={canInstall ? undefined : installHelpOpen} onClick={() => { if (canInstall) void install(); else setInstallHelpOpen(!installHelpOpen); }}><Download aria-hidden="true" />{t("Install app")}</button>}
-      {!installed && !canInstall && installHelpOpen && <p className="sidebar-install-help" role="status">{help}</p>}
+      {/* only a one-tap install is offered here; without a prompt (iOS, plain HTTP) Settings says how to install */}
+      {showInstallButton({ installed, canInstall, dismissed }) && <div className="sidebar-install-row">
+        <button className="btn btn-ghost sidebar-footer-action" onClick={() => void install()}><Download aria-hidden="true" />{t("Install app")}</button>
+        <button className="sidebar-row-action sidebar-install-dismiss" aria-label={t("Hide install app")} title={t("Hide install app")} onClick={dismiss}><X aria-hidden="true" /></button>
+      </div>}
       <div className="sidebar-footer-row">
         <button className="btn btn-ghost sidebar-footer-action" title={t("Settings (⌘⇧,)")} onClick={props.actions.openSettings}><Settings aria-hidden="true" />{t("Settings")}</button>
         <UsageMeters />

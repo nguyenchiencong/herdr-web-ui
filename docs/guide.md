@@ -282,7 +282,7 @@ Only devices in your tailnet can open that address. Your own devices get in with
 **Settings → Phone & devices** in the app does this step for you as far as it can: it shows the address Tailscale already serves for this PC as a QR code, or the exact command still to run, and the address it will give.
 
 1. Open the address.
-2. Install the app: in Safari, choose **Share → Add to Home Screen**; in Chrome, choose **Install app**. Each PC installs as an app of its own: set `HERDR_WEB_APP_NAME` on each to tell them apart (see [Configuration](#configuration)).
+2. Install the app. Where the browser can install it in one tap (Chrome or Edge over HTTPS), the sidebar's **Install app** button appears; its **×** hides it on that device, and **Settings → Phone & devices** still offers the install. In Safari, choose **Share → Add to Home Screen**. Where the browser has no one-tap install, Settings → Phone & devices shows the steps instead. Each PC installs as an app of its own: set `HERDR_WEB_APP_NAME` on each to tell them apart (see [Configuration](#configuration)).
 3. Open the **⋯** menu at the top right and tap **Alerts** to turn on alerts for that device. iPhone needs iOS 16.4+ and the home-screen app.
 
 To check alerts later, choose **Settings → Alerts → Send test**. The result tells you

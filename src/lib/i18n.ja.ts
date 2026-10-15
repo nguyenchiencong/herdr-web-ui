@@ -117,6 +117,7 @@ export const JA: Record<string, string> = {
   "Install": "インストール",
   "Installed": "インストール済み",
   "Install app": "アプリをインストール",
+  "Hide install app": "「アプリをインストール」を非表示",
   "About": "情報",
   "Star on GitHub": "GitHub で Star する",
   "Remote PCs": "リモート PC",

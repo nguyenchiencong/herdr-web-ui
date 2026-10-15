@@ -119,6 +119,7 @@ export const ZH: Record<string, string> = {
   "Install": "安装",
   "Installed": "已安装",
   "Install app": "安装应用",
+  "Hide install app": "隐藏安装应用",
   "About": "关于",
   "Star on GitHub": "在 GitHub 上点 Star",
   "Remote PCs": "远程 PC",

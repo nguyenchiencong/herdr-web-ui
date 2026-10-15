@@ -669,8 +669,9 @@ One set for both themes: the card is island black wherever it shows.
 - Rows use only shared theme tokens in dark and light. Touch keeps row menus and folds visible,
   with `--touch-target` controls, and draws no hover fill; reduced motion removes row transitions
   and keeps the working dot's breath (opacity only).
-- Footer holds the contextual **Install app** action and Settings with the plan meters beside it,
-  as rows on the same grid with no rule above.
+- Footer holds the **Install app** action, only where one tap installs and this device has not
+  closed it (its **×** sits beside it), and Settings with the plan meters beside it, as rows on the
+  same grid with no rule above.
   It carries no product name or version: the running versions are read in Settings.
 
 ### Plan meters (`.usage*`)

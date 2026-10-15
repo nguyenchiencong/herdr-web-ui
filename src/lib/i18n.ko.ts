@@ -115,6 +115,7 @@ export const KO: Record<string, string> = {
   "Install": "설치",
   "Installed": "설치됨",
   "Install app": "앱 설치",
+  "Hide install app": "앱 설치 숨기기",
   "About": "정보",
   "Star on GitHub": "GitHub에서 Star 누르기",
   "Remote PCs": "원격 PC",
