@@ -1,4 +1,5 @@
 import type { AgentInfo, HerdrPane, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
+import type { Translate } from "./i18n.ts";
 import { customTabLabel, tabLabel } from "./tabName.ts";
 
 export interface SidebarAgent {
@@ -67,6 +68,47 @@ export function sidebarAgents(snapshot: SessionSnapshot | null): SidebarAgent[] 
 export function paneMark(entry: SidebarAgent | undefined): string | null {
   if (!entry) return null;
   return entry.canonicalAgent ?? entry.agentLabel ?? "";
+}
+
+/**
+ * The activity a pane reports (its `activity_dots` token, set by the pi extension): `▶ ◐ 2 ◑ ◓`, trimmed.
+ * Null unless the pane reports one. herdr's TUI draws it beside the status dot.
+ */
+export function activityDots(pane: Pick<HerdrPane, "tokens">): string | null {
+  const dots = pane.tokens?.["activity_dots"];
+  return typeof dots === "string" ? nonblank(dots) : null;
+}
+
+/** One glyph of an activity string, with the number after it (null when it has none). */
+export interface ActivityGlyph { glyph: string; count: number | null }
+
+/** The glyphs of an activity string in order: a number right after a glyph is its count, as in `◐ 2`. */
+export function activityGlyphs(dots: string): ActivityGlyph[] {
+  const tokens = dots.trim().split(/\s+/);
+  const glyphs: ActivityGlyph[] = [];
+  for (let at = 0; at < tokens.length; at++) {
+    const next = tokens[at + 1];
+    const counted = next !== undefined && /^\d+$/.test(next);
+    glyphs.push({ glyph: tokens[at]!, count: counted ? Number(next) : null });
+    if (counted) at++;
+  }
+  return glyphs;
+}
+
+/**
+ * An activity string in words, for a row's label: `▶ ◐ 2` reads "Build or test running · Subagents: 2".
+ * A glyph the app does not know stays as it is.
+ */
+export function activityWords(dots: string, t: Translate): string {
+  return activityGlyphs(dots).map(({ glyph, count }) => {
+    switch (glyph) {
+      case "▶": return t("Build or test running");
+      case "◐": return t("Subagents: {n}", { n: count ?? 1 });
+      case "◑": return t("Background commands: {n}", { n: count ?? 1 });
+      case "◓": return t("Bot turns: {n}", { n: count ?? 1 });
+      default: return count === null ? glyph : `${glyph} ${count}`;
+    }
+  }).join(" · ");
 }
 
 /** Every agent a workspace runs, each name once, in the roster's order. */

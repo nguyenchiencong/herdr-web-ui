@@ -58,6 +58,8 @@
   --indicator-done: #94e2d5;
   --indicator-idle: #a6e3a1;
   --indicator-unknown: #6c7086;
+  /* a pane's activity glyphs in the Agents list (AgentSidebar.css) */
+  --activity-dots: #c6f0ff;
   /* a note that the view is partial (a file cut short, code left plain): warning yellow */
   --notice: #e8c55c;
 
@@ -254,6 +256,7 @@
   --indicator-done: #179299;
   --indicator-idle: #40a02b;
   --indicator-unknown: #9ca0b0;
+  --activity-dots: #0a5670;
   --danger-text: #8f1d1d;
   --notice: #7a5a00;
   --scrim: rgba(40, 32, 22, 0.35);

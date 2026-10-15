@@ -145,6 +145,10 @@ export const ZH: Record<string, string> = {
   "Agent waiting on background work": "Agent 正在等待后台工作",
   "—": "—",
   "Agent {status}": "Agent 状态：{status}",
+  "Build or test running": "正在构建或测试",
+  "Subagents: {n}": "子代理：{n}",
+  "Background commands: {n}": "后台命令：{n}",
+  "Bot turns: {n}": "机器人轮次：{n}",
 
   // ---- app header and shell ----
   "Connecting to herdr web ui…": "正在连接 herdr web ui…",

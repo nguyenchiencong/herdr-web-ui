@@ -5,7 +5,7 @@ import type { Machine } from "../../shared/machines.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
 import { useT } from "../lib/i18n.ts";
-import { agentContext, agentTabName, paneMark, sidebarAgents, type SidebarAgent } from "../lib/sidebarAgents.ts";
+import { activityDots, activityGlyphs, activityWords, agentContext, agentTabName, paneMark, sidebarAgents, type SidebarAgent } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { activityOrder } from "../lib/sidebarOrder.ts";
@@ -27,6 +27,8 @@ interface AgentRowBodyProps {
   backgroundTasks?: number;
   plan?: PlanSummary;
   status?: AgentStatus;
+  /** the pane's activity glyphs (activityDots): drawn after the badges, said in words for a screen reader */
+  dots?: string | null;
   /** a pinned row carries a pin after its title; its list says so to a screen reader */
   pinned?: boolean;
 }
@@ -35,7 +37,9 @@ interface AgentRowBodyProps {
  * One agent in a list: the coding agent's mark, what it is working on, who and where it is, and
  * how it is doing.
  */
-function AgentRowBody({ mark, markKind, title, name, context, backgroundTasks, plan, status, pinned }: AgentRowBodyProps) {
+function AgentRowBody({ mark, markKind, title, name, context, backgroundTasks, plan, status, pinned, dots }: AgentRowBodyProps) {
+  const t = useT();
+  const words = dots ? activityWords(dots, t) : "";
   return <>
     <span className="sidebar-mark" aria-hidden="true">{mark !== null ? <AgentMark agent={mark} size={18} /> : <Terminal />}</span>
     <span className="agent-copy">
@@ -50,7 +54,7 @@ function AgentRowBody({ mark, markKind, title, name, context, backgroundTasks, p
         {context}
       </span>}
     </span>
-    <span className="agent-row-status"><BackgroundBadge count={backgroundTasks} /><PlanBadge plan={plan} /></span>
+    <span className="agent-row-status"><BackgroundBadge count={backgroundTasks} /><PlanBadge plan={plan} />{dots ? <span className="agent-activity" role="img" aria-label={words} title={words}>{dots}</span> : null}</span>
     {/* drawn at the row's right edge, after its ⋯, as a workspace row's state is (AgentSidebar.css) */}
     <span className="agent-row-state"><StatusBadge status={status} compact /></span>
   </>;
@@ -138,6 +142,9 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     const tooltip = [...new Set([pane.pane_id, title, context, markKind, name, agent?.display_agent, pane.cwd, online ? null : stateWord(machine)].filter(Boolean))].join("\n");
     const pinKey = sidebarPinKey(machine.id, pane.pane_id);
     const menuOpen = menu?.key === pinKey;
+    const dots = online ? activityDots(pane) : null;
+    // a ◐ in the pane's activity counts the subagents the background badge would count again: the activity says them once
+    const subagentsInDots = dots !== null && activityGlyphs(dots).some(({ glyph }) => glyph === "◐");
     // one menu for the ⋯ and a right-click, which opens it at the pointer and leaves the focus where it was
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
       setMenu(menuOpen ? null : { key: pinKey, anchor, point, previousFocus, title, place: context });
@@ -146,7 +153,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
       onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
       <button type="button" className="agent-select agent-row" disabled={!online} aria-current={selected ? "true" : undefined} title={tooltip} onClick={() => onSelect(machine.id, pane.pane_id)}>
         {/* a saved roster's state is not news: a PC that is away says nothing about its agents */}
-        <AgentRowBody mark={mark} markKind={markKind} title={title} name={name} context={context} backgroundTasks={online ? pane.background_tasks : 0} plan={online ? pane.plan : undefined} status={online ? activity.status(machine.id, pane) : undefined} pinned={pinned.includes(pinKey)} />
+        <AgentRowBody mark={mark} markKind={markKind} title={title} name={name} context={context} backgroundTasks={online && !subagentsInDots ? pane.background_tasks : 0} plan={online ? pane.plan : undefined} status={online ? activity.status(machine.id, pane) : undefined} dots={dots} pinned={pinned.includes(pinKey)} />
       </button>
       <div className="agent-actions">
         <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>

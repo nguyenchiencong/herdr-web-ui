@@ -34,6 +34,7 @@ const NODE_ICONS: Record<OmoRunNode["state"], ComponentType<LucideProps>> = {
  * line counts those, and says "recently", not "in the last day".
  * A Claude pane's tasks are its subagents. Most Claude panes have none, so it asks when
  * the pane is shown (and when its count changes), and appears only when there are or were some.
+ * A pi pane's running subagents are counted and listed by the server as they run, so it needs no ask.
  */
 export function BackgroundTasks({ paneId, count, omo, claude = false, plan = null }: { paneId: string; count: number; omo: boolean; claude?: boolean; plan?: PlanSummary | null }) {
   const t = useT();
@@ -73,8 +74,9 @@ export function BackgroundTasks({ paneId, count, omo, claude = false, plan = nul
   // closed, the list forgets what was opened: it opens on what runs now every time
   useEffect(() => { if (!open) setShowEnded(false); }, [open]);
 
-  // the tasks part shows once a task ran or runs here, or on any OmO pane
-  const tasksShown = count > 0 || seen || omo;
+  // the tasks part shows while a task runs, on any OmO pane, and on a Claude pane once one ran (its ended tasks stay listed);
+  // a pi pane's record is removed when its subagent ends, so a pi pane keeps none to list
+  const tasksShown = count > 0 || (claude && seen) || omo;
   useEffect(() => {
     if (!open || !tasksShown) return;
     let alive = true;

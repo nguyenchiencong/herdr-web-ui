@@ -61,6 +61,7 @@ Only tokens overridden by `[data-theme="light"]` have a light value. Both column
 | Indicator/done | `--indicator-done` | `#94e2d5` | `#179299` |
 | Indicator/idle | `--indicator-idle` | `#a6e3a1` | `#40a02b` |
 | Indicator/unknown | `--indicator-unknown` | `#6c7086` | `#9ca0b0` |
+| Activity/dots | `--activity-dots` | `#c6f0ff` | `#0a5670` |
 | Danger/tint | `--danger-tint` | `rgba(255, 123, 112, 0.12)` | `rgba(168, 35, 35, 0.1)` |
 | Danger/text | `--danger-text` | `#ffd9d4` | `#8f1d1d` |
 | Notice | `--notice` | `#e8c55c` | `#7a5a00` |
@@ -990,7 +991,10 @@ One set for both themes: the card is island black wherever it shows.
   tint while a step or a task is left, and goes quiet once every step is done and nothing runs. A
   narrow card drops the words and keeps the glyphs and numbers. The chip shows only in the chat
   lens, and not for an offline PC's cached plan. The sidebar's agent row repeats the count beside
-  the background count, in its quiet mono figures and with no box (`.plan-count`).
+  the background count, in its quiet mono figures and with no box (`.plan-count`). The agent row
+  also draws its pane's activity glyphs (`.agent-activity`, bold, in `--activity-dots`) after those
+  figures; a `◐` among them already counts the subagents, so the row then leaves out its background
+  count.
 - The chip opens one list above the card: a **Plan** heading with `N of M done`, the steps in wave
   order (a status glyph, the name, what a running step does now, then a dim state · time · teammate
   line; a waiting step's name is dim), then a **Background tasks** heading over the tasks list when

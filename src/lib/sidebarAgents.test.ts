@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentInfo, HerdrPane, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
-import { agentContext, agentTabName, paneMark, sidebarAgents, workspaceAgentLabels } from "./sidebarAgents.ts";
+import { activityDots, activityGlyphs, activityWords, agentContext, agentTabName, paneMark, sidebarAgents, workspaceAgentLabels } from "./sidebarAgents.ts";
 
 function workspace(id: string): WorkspaceInfo {
   return { workspace_id: id, active_tab_id: `${id}:t1`, label: id, number: 1, tab_count: 1, pane_count: 1, focused: false, agent_status: "idle" };
@@ -79,6 +79,39 @@ describe("sidebarAgents", () => {
     expect(sidebarAgents(snapshot([current], [agent(current, { display_agent: "Review bot", name: "reviewer" })]))[0]!.agentLabel).toBe("Review bot");
     expect(sidebarAgents(snapshot([current], [agent(current, { display_agent: " ", name: "reviewer" })]))[0]!.agentLabel).toBe("reviewer");
     expect(sidebarAgents(snapshot([current], [agent(current)]))[0]!.agentLabel).toBe("codex");
+  });
+});
+
+describe("activityDots", () => {
+  it("is the trimmed activity a pane reports, and nothing else", () => {
+    expect(activityDots({ tokens: { activity_dots: "  \u25b6 \u25d0 2 \u25d1 \u25d3 " } })).toBe("\u25b6 \u25d0 2 \u25d1 \u25d3");
+    expect(activityDots({ tokens: { activity_dots: "\u25d0" } })).toBe("\u25d0");
+    expect(activityDots({ tokens: { activity_dots: "" } })).toBeNull();
+    expect(activityDots({ tokens: { activity_dots: " \t " } })).toBeNull();
+    expect(activityDots({ tokens: { activity_dots: 2 } })).toBeNull();
+    expect(activityDots({ tokens: { activity_dots: ["\u25d0"] } })).toBeNull();
+    expect(activityDots({ tokens: { other: "\u25d0" } })).toBeNull();
+    expect(activityDots({})).toBeNull();
+  });
+});
+
+describe("activityWords", () => {
+  const t = (key: string, vars?: Record<string, string | number>) => key.replace(/\{(\w+)\}/g, (match, name: string) => String(vars?.[name] ?? match));
+
+  it("says what each glyph of the pane's activity stands for, with its count", () => {
+    expect(activityGlyphs("\u25b6 \u25d0 2 \u25d1 \u25d3")).toEqual([
+      { glyph: "\u25b6", count: null },
+      { glyph: "\u25d0", count: 2 },
+      { glyph: "\u25d1", count: null },
+      { glyph: "\u25d3", count: null },
+    ]);
+    expect(activityWords("\u25b6 \u25d0 2 \u25d1 \u25d3", t)).toBe("Build or test running \u00b7 Subagents: 2 \u00b7 Background commands: 1 \u00b7 Bot turns: 1");
+    expect(activityWords("\u25d0", t)).toBe("Subagents: 1");
+  });
+
+  it("keeps a glyph the app does not know as it is", () => {
+    expect(activityGlyphs("\u2726 3")).toEqual([{ glyph: "\u2726", count: 3 }]);
+    expect(activityWords("\u2726 3 \u25d0", t)).toBe("\u2726 3 \u00b7 Subagents: 1");
   });
 });
 

@@ -29,6 +29,7 @@ import { createGjcStatus, gjcPanes, readOmoSnapshot, reconcileProviderStatus } f
 import { OMO_ALIASES, OmoStatus, processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
 import { ClaudeSubagentStatus, claudeSubagents, within } from "./claude-subagents.ts";
+import { PiSubagentStatus, panePiProcesses, piSubagentsDir, piSubagentsOf, type RecordCache } from "./pi-subagents.ts";
 import { BackgroundWait } from "./background-wait.ts";
 import { SessionPlans } from "./session-plan.ts";
 import { codexOpenRollout, paneCodexHome } from "./codex.ts";
@@ -451,6 +452,8 @@ export function createServer(
     tailnet?: TailnetIdentitySource;
     /** Native Codex store; defaults to CODEX_HOME. Tests use an isolated store. */
     codexHome?: string;
+    /** pi's agent directory, where pi-subagents keeps its records (subagents-state); tests pass a temp dir. Unset: PI_CODING_AGENT_DIR, else ~/.pi/agent */
+    piAgentDir?: string;
     grokHome?: string;
     /** OpenCode's database; defaults to where OpenCode finds it (OPENCODE_DB, XDG_DATA_HOME). Tests use an isolated store. */
     opencodeDb?: string;
@@ -1129,6 +1132,15 @@ export function createServer(
     },
     onChange: (paneId, running, turnRunning, promptAt) => claudeAgentsChanged(paneId, running, turnRunning, promptAt),
   });
+  /** pi panes count the subagents pi-subagents runs for them, read from pi's state directory (server/pi-subagents.ts) */
+  const piStateDir = piSubagentsDir(options.piAgentDir);
+  /** the state directory's records, read again only where they changed; the list of a pi pane reads them too */
+  const piRecords: RecordCache = new Map();
+  const piAgents = new PiSubagentStatus({
+    dir: piStateDir,
+    processes: panePiProcesses,
+    onChange: (paneId, running) => piAgentsChanged(paneId, running),
+  });
   /** the plan each Claude Code and Codex pane's agent keeps, for the sidebar's progress (server/session-plan.ts) */
   const plans = new SessionPlans({
     claudePath: (paneId) => claudeAgents.sessionOf(paneId)?.path ?? null,
@@ -1144,11 +1156,12 @@ export function createServer(
     // not waited for: finding a transcript costs process calls, and a snapshot must not wait on them.
     // The plans come after: a Claude pane's transcript is the one the subagent tracker found
     void claudeAgents.refresh(named.panes).catch(() => undefined).then(() => plans.refresh(named.panes)).catch(() => undefined);
+    void piAgents.refresh(named.panes).catch(() => undefined);
     // an agent this server started has had no turn yet: its start screen is no work (launched-agents.ts)
     for (const pane of named.panes) pane.agent_status = launchedAgents.settle(pane.pane_id, pane.agent_status);
     return named;
   };
-  const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId);
+  const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId) || piAgents.countOf(paneId);
   /** the snapshot clients get: finishes settled, OmO panes named, background tasks, waits and plan progress */
   const clientSnapshot = async (): Promise<SessionSnapshot> => {
     const snapshot = await completions.readSnapshot(rawSnapshot);
@@ -1663,6 +1676,14 @@ export function createServer(
     if (changed) push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
   }
 
+  /** A pi pane's subagents started or ended: no turn, so the status stands and nothing is alerted. */
+  function piAgentsChanged(paneId: string, running: number): void {
+    const status = completions.current(paneId);
+    // a pane never reported here carries its count in the next snapshot
+    if (status === undefined) return;
+    broadcastAll(paneStatus(paneId, status, { background_tasks: running }));
+  }
+
   /** A wait ran out (its work ended and no turn followed, or it was held as long as one is): the status it stood for. */
   function waitsRanOut(): void {
     for (const paneId of waits.tick()) {
@@ -1774,6 +1795,7 @@ export function createServer(
   omo.start();
   gjc.start();
   claudeAgents.start();
+  piAgents.start();
   const waitTimer = setInterval(waitsRanOut, 1000);
   waitTimer.unref?.();
   plans.start();
@@ -2469,7 +2491,11 @@ export function createServer(
             })());
           }
           const claude = claudeAgents.sessionOf(paneId);
-          return jsonResponse({ tasks: claude === null ? [] : claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt), runs: [], server_time });
+          if (claude !== null) return jsonResponse({ tasks: claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt), runs: [], server_time });
+          // a pi pane's running subagents, from pi's own records for the pi processes the pane runs (server/pi-subagents.ts)
+          const target = await paneGet(paneId).catch(() => null);
+          const tasks = target?.agent === "pi" ? await piSubagentsOf(paneId, piStateDir, piRecords) : [];
+          return jsonResponse({ tasks, runs: [], server_time });
         }
         return jsonResponse({ tasks: omoTasks(session.cwd, session.sessionId, processAlive), runs: omoRuns(session.cwd, session.sessionId), server_time });
       }
@@ -3573,6 +3599,7 @@ export function createServer(
       omo.stop();
       gjc.stop();
       claudeAgents.stop();
+      piAgents.stop();
       clearInterval(waitTimer);
       plans.stop();
       machines?.stop();

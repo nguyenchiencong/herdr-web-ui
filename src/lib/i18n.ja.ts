@@ -143,6 +143,10 @@ export const JA: Record<string, string> = {
   "Agent waiting on background work": "エージェントがバックグラウンドの作業を待っています",
   "—": "—",
   "Agent {status}": "エージェント {status}",
+  "Build or test running": "ビルドまたはテストの実行中",
+  "Subagents: {n}": "サブエージェント: {n}",
+  "Background commands: {n}": "バックグラウンドのコマンド: {n}",
+  "Bot turns: {n}": "ボットのターン: {n}",
 
   // ---- app header and shell ----
   "Connecting to herdr web ui…": "herdr web ui に接続しています…",

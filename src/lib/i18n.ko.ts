@@ -141,6 +141,10 @@ export const KO: Record<string, string> = {
   "Agent waiting on background work": "에이전트가 백그라운드 작업을 기다리는 중",
   "—": "—",
   "Agent {status}": "에이전트 {status}",
+  "Build or test running": "빌드 또는 테스트 실행 중",
+  "Subagents: {n}": "서브에이전트: {n}",
+  "Background commands: {n}": "백그라운드 명령: {n}",
+  "Bot turns: {n}": "봇 차례: {n}",
 
   // ---- app header and shell ----
   "Connecting to herdr web ui…": "herdr web ui에 연결하는 중…",
