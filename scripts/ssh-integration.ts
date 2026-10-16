@@ -1,5 +1,5 @@
 /** Real OpenSSH, real isolated herdr, real bundle install. No remote API mocks.
- * SSH_TEST_PASSWORD=1 uses a temporary system account (CI sudo required).
+ * SSH_TEST_PASSWORD=1 uses a temporary system account (noninteractive sudo required).
  * Otherwise an encrypted key exercises the askpass + dedicated-key flow.
  */
 import assert from "node:assert/strict";

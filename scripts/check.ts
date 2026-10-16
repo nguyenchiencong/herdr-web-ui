@@ -1,11 +1,10 @@
 /**
- * The checks, from one entry point: CI's jobs call it, and so does a developer or an agent
- * before pushing, so both run the same thing.
+ * The checks, from one entry point: the gate a change passes before it merges and before a release
+ * (there is no GitHub CI). A developer or an agent runs the same thing.
  *
- *   bun run check fast                  what CI's "Fast checks" job runs: workflow syntax, generated
- *                                       types, typecheck, build, unit tests. No herdr needed.
- *   bun run check integration browser   CI's "Integration and browser" job: a build, then the named
- *                                       lanes side by side (either name alone runs that lane)
+ *   bun run check fast                  generated types, typecheck, build, unit tests. No herdr needed.
+ *   bun run check integration browser   a build, then the named lanes side by side (either name alone
+ *                                       runs that lane)
  *   bun run check full                  fast, then both lanes
  *   bun run check concurrent            the steps of full, with the unit tests run side by side
  *                                       with both lanes instead of before them
@@ -32,7 +31,7 @@
  * browser cache. `run` does not rebuild dist/ unless asked with `--build`.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { chmodSync, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { availableParallelism, tmpdir } from "node:os";
@@ -111,9 +110,6 @@ export function sanitizeCommand(command: readonly string[]): string[] {
   return bounded;
 }
 
-/** actionlint as CI pins it. The archive is checked against its SHA-256 before it is unpacked. */
-const ACTIONLINT = { version: "1.7.12", sha256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8" };
-
 /** A unix socket's path holds about 104 bytes on macOS and 108 on Linux. */
 const SOCKET_PATH_MAX = 100;
 
@@ -163,7 +159,7 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
     HERDR_WEB_STATE_DIR: join(dir, "web-state"),
     HERDR_TEST_SESSION: session,
     // One integration file at a time: four at once made the timing-bound contract tests fail in
-    // turn on CI's four cores. HERDR_TEST_SHARDS raises it (scripts/ci-tests.ts).
+    // turn on four cores. HERDR_TEST_SHARDS raises it (scripts/ci-tests.ts).
     HERDR_TEST_SHARDS: base["HERDR_TEST_SHARDS"] || "1",
   });
   return { env, sessions, remove: () => { if (!kept) rmSync(dir, { recursive: true, force: true }); } };
@@ -189,23 +185,22 @@ export function maxRuns(env: Record<string, string | undefined>, cores = availab
 }
 
 /**
- * What a run calls its checkout to the runs that share its slots. A self-hosted CI runner shares its
- * loopback with the other runner containers of its PC (scripts/self-hosted-runner/run.sh), and every
- * one of them checks out to the same path, so there the runner's name (RUNNER_NAME, set by the
- * Actions runner) is part of it: two runners are two checkouts.
+ * What a run calls its checkout to the runs that share its slots. CI runners on one PC share a
+ * loopback and can check out to the same path, so a runner's name (RUNNER_NAME, when it sets one) is
+ * part of it: two runners are two checkouts.
  */
 export function checkoutIdentity(checkout: string, env: Record<string, string | undefined> = process.env): string {
   const runner = env["RUNNER_NAME"];
   return runner ? `${runner}:${checkout}` : checkout;
 }
 
-/** The most CHECK_WAIT_SECONDS may ask for: two hours, past any CI job's timeout. */
+/** The most CHECK_WAIT_SECONDS may ask for: two hours. */
 export const MAX_WAIT_SECONDS = 7200;
 
 /**
  * How long a run waits for a slot when the run limit is reached: CHECK_WAIT_SECONDS (0 to 7200),
- * else 0, which refuses at once. CI sets it: a job that finds the PC busy waits its turn instead
- * of failing. A run in the same checkout, or a held resource, is still refused at once.
+ * else 0, which refuses at once. Set it for a run that should wait its turn instead of failing.
+ * A run in the same checkout, or a held resource, is still refused at once.
  */
 export function waitSeconds(env: Record<string, string | undefined>): number {
   const asked = env["CHECK_WAIT_SECONDS"];
@@ -442,7 +437,6 @@ async function main(): Promise<void> {
   const bun = process.execPath;
   const specs: { name: string; command: string[] | null }[] = [];
   if (todo.fast || todo.concurrent) {
-    specs.push({ name: "workflow syntax", command: null });
     specs.push({ name: "generated types are fresh", command: [bun, "run", "generate:types", "--check"] });
     specs.push({ name: "typecheck", command: [bun, "run", "typecheck"] });
     specs.push({ name: "build", command: [bun, "run", "build"] });
@@ -638,25 +632,6 @@ async function main(): Promise<void> {
     } else if (command) step.command = sanitizeCommand(command);
     return step;
   };
-  const recordIssue = (label: string, message: string, status: "failure" | "skipped"): void => {
-    const step = getStep(label);
-    step.status = status;
-    step.reason = message;
-    step.startedAt = new Date().toISOString();
-    step.endedAt = step.startedAt;
-    step.durationMs = 0;
-    step.exitCode = status === "failure" ? 1 : null;
-    step.signal = null;
-    mkdirSync(logDirectory, { recursive: true });
-    writeFileSync(step.stdout, "", { mode: 0o600 });
-    writeFileSync(step.stderr, status === "failure" ? `${message}\n` : "", { mode: 0o600 });
-    if (status === "failure") {
-      report.errors.push(message);
-      console.error(`check: ${message}`);
-    } else console.log(`\n=== ${label}: skipped (${message})`);
-    saveReport();
-  };
-
   /** Runs one step in a process group, streaming output both to the console and durable log files. */
   const run = (label: string, command: string[], env: Record<string, string | undefined>, commandCwd = cwd): Promise<number> => {
     const step = getStep(label, command);
@@ -767,7 +742,6 @@ async function main(): Promise<void> {
     });
   };
 
-  const skip = (label: string, reason: string): void => recordIssue(label, reason, "skipped");
   const build = async (env: Record<string, string | undefined>): Promise<number> => {
     report.browserArtifact.buildAttempted = true;
     report.browserArtifact.identity = null;
@@ -795,8 +769,6 @@ async function main(): Promise<void> {
     // A run command shares the same herdr and dist state, so it uses the same lock as named lanes.
     if (todo.fast || todo.concurrent) {
       // `concurrent` runs the same pre-steps as `fast`; only the unit tests move beside the lanes.
-      const actionlintResult = await actionlint(run, plain, (reason) => skip("workflow syntax", reason), (message) => recordIssue("workflow syntax", message, "failure"));
-      code = actionlintResult;
       for (const [label, command] of [
         ["generated types are fresh", [bun, "run", "generate:types", "--check"]],
         ["typecheck", [bun, "run", "typecheck"]],
@@ -1039,43 +1011,6 @@ export async function endWindowsTree(root: number, startedAt: number, exitedAt: 
   const members = windowsTreeMembers(await windowsProcessTable(10_000), root, startedAt, exitedAt);
   for (const member of members) kill(member.pid, false);
   return members.length;
-}
-
-/**
- * Workflow syntax, with the release CI pins. It is fetched once into node_modules/.cache; a
- * platform the pin does not cover leaves the check to CI, and says so.
- */
-async function actionlint(
-  run: (label: string, command: string[], env: Record<string, string | undefined>, cwd?: string) => Promise<number>,
-  env: Record<string, string | undefined>,
-  skip: (reason: string) => void,
-  fail: (message: string) => void,
-): Promise<number> {
-  if (process.platform !== "linux" || process.arch !== "x64") {
-    skip("actionlint is pinned for Linux x64; CI checks workflow syntax on other platforms");
-    return 0;
-  }
-  const dir = join("node_modules", ".cache", `actionlint-${ACTIONLINT.version}`);
-  const binary = join(dir, "actionlint");
-  if (!existsSync(binary)) {
-    const url = `https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT.version}/actionlint_${ACTIONLINT.version}_linux_amd64.tar.gz`;
-    let archive: Uint8Array | null = null;
-    for (let attempt = 1; attempt <= 3 && !archive; attempt++) {
-      try {
-        const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-        if (response.ok) archive = new Uint8Array(await response.arrayBuffer());
-      } catch { /* tried again */ }
-    }
-    if (!archive) { fail(`could not fetch pinned actionlint ${ACTIONLINT.version}`); return 1; }
-    const sha256 = createHash("sha256").update(archive).digest("hex");
-    if (sha256 !== ACTIONLINT.sha256) { fail(`actionlint ${ACTIONLINT.version} archive did not match its pinned SHA-256`); return 1; }
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "actionlint.tgz"), archive);
-    const unpacked = await run("unpack actionlint", ["tar", "xzf", "actionlint.tgz", "actionlint"], env, dir);
-    rmSync(join(dir, "actionlint.tgz"), { force: true });
-    if (unpacked !== 0) return 1;
-  }
-  return run("workflow syntax", [binary, "-shellcheck="], env);
 }
 
 // last: main() uses every constant above

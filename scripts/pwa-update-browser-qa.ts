@@ -88,7 +88,7 @@ try {
   assert.ok(process.env.HERDR_SOCKET, "the test-herdr preload must select the test socket before any workspace is created");
   console.log(`PWA isolated socket: ${process.env.HERDR_SOCKET}`);
   // The copied server resolves its own dist directory. No shared build output is swapped,
-  // so this scenario can run alongside the other CI browser shards.
+  // so this scenario can run alongside the other browser scripts.
   mkdirSync(app);
   for (const folder of ["server", "shared", "telemetry"]) {
     cpSync(join(repo, folder), join(app, folder), { recursive: true, filter: (path) => !path.endsWith(".test.ts") });

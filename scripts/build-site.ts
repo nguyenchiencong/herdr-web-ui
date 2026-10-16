@@ -1,11 +1,11 @@
 /**
- * Assembles the website into _site/ for GitHub Pages (.github/workflows/pages.yml) and for a local
+ * Assembles the website into _site/, which is published by hand (no workflow deploys it), and for a local
  * look (`bun run build:site`, then serve _site/ under /herdr-web-ui/).
  *
  * The page is site/index.html. It is built from the README's artifacts: its top video (`videos`, a GitHub
  * upload that is downloaded, never committed; docs/development.md, "README media"), its feature clips
  * (docs/media/readme/*.webp) and the installer still. A video's poster frame is cut with ffmpeg when it
- * is installed (the workflow installs it); without it the still stays full size and a poster that
+ * is installed (install it first); without it the still stays full size and a poster that
  * could not be made is dropped from the page. `{{version}}`, `{{stars}}`, `{{contributors}}`,
  * `{{plugin_rank}}` and `{{plugin_repo_count}}` in the page are filled in here, from package.json, the
  * GitHub API and herdr's plugin index. The page's FAQ rows are also written into its head as

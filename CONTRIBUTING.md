@@ -23,8 +23,8 @@ adapted from another project, with its license.
 
 - Linux (x64, arm64), macOS or Windows x64. Windows uses the screen mirror and needs no terminal addon; Alpine and 32-bit ARM have no addon build.
 - Bun 1.4 or newer, Node 18 or newer on Linux/macOS (it runs the terminal-attach sidecar), herdr 0.9.0 or newer for
-  the integration tests. CI runs Bun 1.4.2, Node 22 and herdr 0.9.3, all pinned in
-  [.github/actions/setup-ci/action.yml](.github/actions/setup-ci/action.yml).
+  the integration tests. The versions CI used to pin are Bun 1.4.2 (`packageManager` in package.json), Node 22
+  and herdr 0.9.3.
 
 ```bash
 bun install
@@ -48,15 +48,14 @@ Neither command updates itself; only `bun run start` and the plugin run the upda
   `type(scope): summary`, for example `fix(chat): keep the finished turn finished after Send`.
   The merge adds `(#N)`.
 - Fill in the [PR template](.github/pull_request_template.md): what changed and how you checked it.
-- CI on a fork's PR waits until a maintainer approves the run. That approval is not a review.
 
 ## Checks
 
-`bun run check fast` runs the **Fast checks** CI job, and `bun run check full` adds the
-**Integration and browser** job, on a herdr of its own apart from the one you work in
+`bun run check` is the gate: `bun run check fast` is its quick part, and `bun run check full` adds the two
+herdr lanes, on a herdr of its own apart from the one you work in
 ([docs/development.md](docs/development.md#checks)).
 
-**Fast checks** is these, one by one; none needs herdr:
+**`bun run check fast`** runs these, one by one; none needs herdr:
 
 ```bash
 bun run generate:types --check   # shared/herdr-api.generated.ts matches scripts/herdr-schema.json
@@ -65,7 +64,7 @@ bun run build
 bun run test:unit
 ```
 
-**Integration and browser** needs herdr on `PATH` (or `HERDR_WEB_HERDR_BIN`) and Chrome
+**The lanes** (`bun run check full`) need herdr on `PATH` (or `HERDR_WEB_HERDR_BIN`) and Chrome
 (`CHROME_PATH`, default `/opt/google/chrome/chrome`):
 
 ```bash
@@ -92,8 +91,8 @@ running terminals: see [development](docs/development.md#checks).
 - **Color palettes:** the app keeps three (Amber, Charcoal, Catppuccin) and does not take new ones.
   Every palette is a light and a dark block that each later token change has to fill in, so a PR
   that adds a palette is closed.
-- **The browser demo:** the [demo](https://herdrweb.dev/demo/) redeploys on every
-  merge to `main`. A feature meant to show there needs an answer in `site/demo/transport.ts`; anything
+- **The browser demo:** the [demo](https://herdrweb.dev/demo/) is built from `main` and
+  published by hand. A feature meant to show there needs an answer in `site/demo/transport.ts`; anything
   else gets its 404.
 - **Changelog:** a change users notice gets a small file in [changelog.d/](changelog.d/README.md)
   with its `### Added`, `### Changed` or `### Fixed` lines; do not edit CHANGELOG.md, and do not
@@ -101,6 +100,7 @@ running terminals: see [development](docs/development.md#checks).
 
 ## Releases
 
-Maintainers only: see [development](docs/development.md#releasing). App releases are cut by the
-Release workflow; never push a `vX.Y.Z` tag by hand, since installed updaters act on tags alone.
-Remote-PC runtime bundles are published with a `remote-vN` tag, and an app release requires the matching one.
+Maintainers only: see [development](docs/development.md#releasing). Releases are made by hand. A `vX.Y.Z`
+tag is a release: installed updaters pick it up at their next check, so create one only as the last step of a
+release, and never move or delete one.
+Remote-PC runtime bundles are published by hand as a `remote-vN` release, and an app release requires the matching one.

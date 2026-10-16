@@ -59,10 +59,11 @@ Without the helper: `herdr plugin action invoke devswha.herdr-web-ui.start-windo
 bun run server      # API + WebSocket on :7317
 bun run dev         # Vite on :5173, in a second terminal
 bun run typecheck
-bun run check fast  # CI's fast checks; no herdr needed
+bun run check fast  # generated types, typecheck, build, unit tests; no herdr needed
 bun test            # all tests; herdr-backed ones use an isolated session
 ```
 
+There is no GitHub CI: `bun run check full` is the gate before a merge, and releases are made by hand.
 Commands, checks and releases are in [docs/development.md](docs/development.md). A user-visible change gets a `changelog.d/` fragment, not a CHANGELOG.md edit.
 
 ## security

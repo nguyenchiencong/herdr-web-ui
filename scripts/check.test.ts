@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -482,12 +482,6 @@ describe("check CLI", () => {
     }));
     git(cwd, "add", ".gitignore", "package.json");
     git(cwd, "commit", "-qm", "fixture");
-
-    const actionlintDirectory = join(cwd, "node_modules", ".cache", "actionlint-1.7.12");
-    mkdirSync(actionlintDirectory, { recursive: true });
-    const actionlint = join(actionlintDirectory, "actionlint");
-    writeFileSync(actionlint, "#!/bin/sh\nexit 0\n");
-    chmodSync(actionlint, 0o755);
 
     const env: Record<string, string | undefined> = { ...process.env, CHECK_DIR: ".check" };
     delete env["CHECK_REPORT"];

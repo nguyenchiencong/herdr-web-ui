@@ -21,5 +21,5 @@ repo's most frequent merge conflict. Do not edit CHANGELOG.md in a PR.
 
 `scripts/changelog-fold.test.ts` checks every file here (and that CHANGELOG.md holds no conflict
 markers). At release, `bun scripts/changelog-fold.ts X.Y.Z` moves the existing Unreleased notes and
-these fragments under the new version and deletes the fragments; the release workflow refuses to
-tag while a fragment is left here.
+these fragments under the new version and deletes the fragments; the release notes refuse to
+publish while a fragment is left here (`scripts/release-notes.ts`).

@@ -2,7 +2,7 @@
  * What only a real Windows PC can show: its process table as PowerShell answers it, and a
  * session store on its own file system with its own path rules. Everything else about the
  * Windows branches is tested with rows and paths handed in (gjc-runtime.test.ts); these run
- * on the Windows runners of reusable CI and the remote-bundle workflow (#271).
+ * on a real Windows PC, where the unit suite runs them (#271).
  */
 import { expect, it } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -29,7 +29,7 @@ it.skipIf(!onWindows)("installs with native tar when PATH shadows tar, and prese
   const runtime = join(home, "herdr-web-ui", `remote-v${REMOTE_BUNDLE_VERSION}`);
   const runPowerShell = async (script: string) => {
     const prefixed = `$env:LOCALAPPDATA=${psQuote(home)}; $env:PATH=${psQuote(join(home, "shadow"))}+';'+$env:PATH; ${script}`;
-    // started from PowerShell 7 (the CI step), the child inherits its module path, and Windows
+    // started from PowerShell 7 (pwsh), the child inherits its module path, and Windows
     // PowerShell then cannot load its own Get-FileHash; with none set it builds its own, as over SSH
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== "psmodulepath"));
     const child = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(prefixed, "utf16le").toString("base64")], { stdout: "pipe", stderr: "pipe", env });

@@ -10,12 +10,12 @@
  * BROWSER_RETRY: 0 runs a failed script once only (default: a failed script runs a second time)
  *
  * A script that fails and then passes is reported as flaky, not hidden: its first log is kept as
- * <script>.attempt-1.log and printed, summary.json lists it, and under GitHub Actions it gets a
- * warning annotation and a line in the job summary. A script that fails twice fails the lane.
+ * <script>.attempt-1.log and printed, and summary.json lists it. A script that fails twice still
+ * fails the lane.
  */
 import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
-import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const repo = join(import.meta.dir, "..");
@@ -69,9 +69,6 @@ export function failureSite(log: string): { site: string | null; message: string
 
 const failureDetail = (result: ScriptResult): string =>
   [result.site, result.message].filter(Boolean).join(": ");
-
-const workflowData = (message: string): string =>
-  message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
 
 /** How a script ended, from its last exit code and whether that was its second run: a pass after a failure is flaky, never a plain pass. */
 export function scriptOutcome(code: number, secondRun: boolean): "pass" | "flaky" | "fail" {
@@ -251,20 +248,12 @@ async function main(): Promise<void> {
     const detail = failureDetail(result);
     console.log(`\n${"=".repeat(80)}\nFLAKY ${result.script}: failed, then passed when run again; first log: ${result.firstLog}${detail ? `; ${detail}` : ""}`);
     tail(result.firstLog!);
-    if (process.env.GITHUB_ACTIONS) console.log(`::warning title=Flaky browser script::${workflowData(`${result.script}${detail ? `: ${detail}` : ""} failed once and passed when run again. Its first log is ${basename(result.firstLog!)} in the browser-logs artifact.`)}`);
-  }
-  if (flaky.length > 0 && process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Flaky browser scripts\n\nFailed once, passed when run again:\n\n${flaky.map((r) => `- \`${r.script}\`${failureDetail(r) ? `: ${failureDetail(r)}` : ""} (first log \`${basename(r.firstLog!)}\`)`).join("\n")}\n`);
   }
 
   for (const result of failed) {
     const detail = failureDetail(result);
     console.log(`\n${"=".repeat(80)}\nFAILED ${result.script} (exit ${result.code}${result.firstLog ? ", twice" : ""}), full log: ${result.log}${detail ? `; ${detail}` : ""}`);
     tail(result.log);
-    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Browser script failed::${workflowData(`${result.script}${detail ? `: ${detail}` : ""} failed (exit ${result.code}${result.firstLog ? ", twice" : ""}). Full log: ${basename(result.log)} in the browser-logs artifact.`)}`);
-  }
-  if (failed.length > 0 && process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Failed browser scripts\n\n${failed.map((r) => `- \`${r.script}\`${failureDetail(r) ? `: ${failureDetail(r)}` : ""} (full log \`${basename(r.log)}\`)`).join("\n")}\n`);
   }
 
   process.exit(failed.length > 0 ? 1 : 0);

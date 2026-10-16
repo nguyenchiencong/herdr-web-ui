@@ -65,7 +65,6 @@ async function run(test: Fixture, extra: Record<string, string> = {}): Promise<R
       ...process.env,
       PATH: `${test.bin}${delimiter}${process.env.PATH ?? ""}`,
       CI: "",
-      RUNNER_ENVIRONMENT: "",
       MOCK_LOG: test.log,
       MOCK_CHROMIUM_PATH: test.browser,
       ...extra,
@@ -85,43 +84,10 @@ async function run(test: Fixture, extra: Record<string, string> = {}): Promise<R
 }
 
 describe.skipIf(process.platform === "win32")("Chromium setup helper", () => {
-  it("uses an executable preinstalled browser on self-hosted CI without installers", async () => {
+  it("runs bounded system dependency installation before browser install on CI", async () => {
     const test = fixture();
     try {
-      const result = await run(test, { CI: "1", RUNNER_ENVIRONMENT: "self-hosted" });
-      expect(result.code).toBe(0);
-      expect(result.stdout).toBe(`${test.browser}\n`);
-      expect(result.stderr).toContain("runner image");
-      expect(result.log).toEqual(['bun -e console.log(require("playwright-core").chromium.executablePath())']);
-    } finally {
-      rmSync(test.dir, { recursive: true, force: true });
-    }
-  });
-
-  it("fails stale self-hosted images with rebuild guidance and no install fallback", async () => {
-    const test = fixture();
-    try {
-      const missing = join(test.dir, "missing-chromium");
-      const result = await run(test, {
-        CI: "1",
-        RUNNER_ENVIRONMENT: "self-hosted",
-        MOCK_CHROMIUM_PATH: missing,
-      });
-      expect(result.code).not.toBe(0);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("Rebuild the image");
-      expect(result.stderr).toContain("lockfile's Playwright version");
-      expect(result.stderr).toContain("PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers");
-      expect(result.log).toEqual(['bun -e console.log(require("playwright-core").chromium.executablePath())']);
-    } finally {
-      rmSync(test.dir, { recursive: true, force: true });
-    }
-  });
-
-  it("runs bounded system dependency installation before browser install on hosted CI", async () => {
-    const test = fixture();
-    try {
-      const result = await run(test, { CI: "1", RUNNER_ENVIRONMENT: "github-hosted" });
+      const result = await run(test, { CI: "1" });
       expect(result.code).toBe(0);
       expect(result.stdout).toBe(`${test.browser}\n`);
       expect(result.log).toEqual([
@@ -182,7 +148,7 @@ describe.skipIf(process.platform === "win32")("Chromium setup helper", () => {
   it("preserves bounded dependency installer failures", async () => {
     const test = fixture();
     try {
-      const result = await run(test, { CI: "1", RUNNER_ENVIRONMENT: "github-hosted", MOCK_SUDO_EXIT: "19" });
+      const result = await run(test, { CI: "1", MOCK_SUDO_EXIT: "19" });
       expect(result.code).toBe(19);
       expect(result.stdout).toBe("");
       expect(result.stderr).toContain("Failed to install Chromium system dependencies");

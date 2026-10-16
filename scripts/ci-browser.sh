@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The browser lane of CI: the lockfile's Playwright Chromium, then the scripts that drive it.
+# The browser lane: the lockfile's Playwright Chromium, then the scripts that drive it.
 # BROWSER_PARALLEL=1: run scripts concurrently (see ci-browser-parallel.ts)
 # BROWSER_WORKERS: worker count for parallel mode (default: min(cores/2, 6))
 set -euo pipefail

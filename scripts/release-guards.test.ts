@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { BUNDLE_WORKFLOW, bundleInput, bundleProblems, check, DEPLOYED_FILE, WORKER_SOURCES, workerFingerprint, workerProblems } from "./release-guards.ts";
+import { bundleInput, bundleProblems, check, DEPLOYED_FILE, WORKER_SOURCES, workerFingerprint, workerProblems } from "./release-guards.ts";
 
 const made: string[] = [];
 /** a throwaway identity, unsigned whatever the user's git config says */
@@ -28,7 +28,7 @@ describe("bundleProblems", () => {
   });
 
   it("fails the Release run until the raised bundle is published, and a number below a published one", () => {
-    expect(bundleProblems({ version: 28, published: [27], changed: null, publishing: true })[0]).toContain("Push the tag remote-v28");
+    expect(bundleProblems({ version: 28, published: [27], changed: null, publishing: true })[0]).toContain("remote-v28 is not published");
     expect(bundleProblems({ version: 26, published: [27], changed: [], publishing: false })[0]).toContain("raise it to 28");
   });
 
@@ -132,14 +132,13 @@ describe("check", () => {
     expect(check(dir, true).problems[0]).toContain("from 2 to 3");
   });
 
-  it("fails a release that moved the bun pin the Linux bundles carry", () => {
-    const pin = (version: string) => `steps:\n  - uses: oven-sh/setup-bun@v2\n    with:\n      bun-version: ${version}\n`;
-    const dir = released({ [BUNDLE_WORKFLOW]: pin("1.4.2") });
+  it("fails a release that moved the Bun the Linux bundles carry", () => {
+    const dir = released({ "package.json": JSON.stringify({ version: "1.0.0", packageManager: "bun@1.4.2", dependencies: { a: "1" } }) });
     run(dir, "tag", "-f", "remote-v1");
-    writeFileSync(join(dir, BUNDLE_WORKFLOW), pin("1.5.0"));
-    run(dir, "commit", "-qam", "bun");
     releasePr(dir);
-    expect(check(dir, false).problems[0]).toContain(`${BUNDLE_WORKFLOW} bun-version`);
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "1.1.0", packageManager: "bun@1.5.0", dependencies: { a: "1" } }));
+    run(dir, "commit", "-qam", "bun 1.5.0");
+    expect(check(dir, false).problems[0]).toContain("package.json packageManager");
   });
 
   it("fails a release whose Worker changed without a recorded deploy, and one without patch notes", () => {

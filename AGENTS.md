@@ -36,8 +36,11 @@ to change. Also read [server/AGENTS.md](server/AGENTS.md) and [src/AGENTS.md](sr
 - Screenshots and recordings come from the demo or a test session, never the user's live one.
 
 ## Maintainer workflow
-- Never push a `v*` tag by hand: installed updaters act on tags alone.
-- Required checks: Fast checks, Integration and browser, Native Windows install. Resolve review
-  threads before merging (branch protection does not enforce it).
+- There is no GitHub CI. `bun run check full` is the gate: run it on the exact commit before merging, and run
+  the manual checks the change needs ([development](docs/development.md#checks)). Resolve review threads
+  before merging (nothing enforces it).
+- A `v*` tag is a release: installed updaters pick it up at their next check, with or without a GitHub
+  release. Create one only as the last step of a release ([releasing](docs/development.md#releasing)), and
+  never move or delete a published tag.
 - Changelog entries go in `changelog.d/` fragments ([format](changelog.d/README.md)), not
   CHANGELOG.md; only a release folds them in.

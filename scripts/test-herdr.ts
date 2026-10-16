@@ -6,7 +6,7 @@
  *
  * `bun test` loads this first (bunfig.toml); the browser and SSH scripts import it.
  * HERDR_TEST_LIVE=1 keeps the old behaviour: tests use HERDR_SOCKET, else the default
- * session. Without a herdr binary nothing changes, so CI runs as before.
+ * session. Without a herdr binary nothing changes.
  * HERDR_TEST_MODE=unit points HERDR_SOCKET at a socket that does not exist, so a test that
  * reaches for herdr in a unit run fails instead of working in the user's herdr.
  */

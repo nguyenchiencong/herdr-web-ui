@@ -120,29 +120,65 @@ bun run build:remote win32-x64     # Windows
 bun run build:remote darwin-x64    # Intel Mac
 ```
 
-The builder verifies herdr 0.9.3, all downloaded runtime checksums, macOS executable architectures and PTY helper permissions. Native builds run an actual PTY smoke test. Cross-platform assembly records `native_smoke_tested: false`; the destination runs bundled Bun/herdr and a Node PTY smoke test **before activating** the installed runtime. macOS runtime execution still needs native CI or a real Mac to verify it. No build tools are required on the remote PC.
+The builder verifies herdr 0.9.3, all downloaded runtime checksums, macOS executable architectures and PTY helper permissions. Native builds run an actual PTY smoke test. Cross-platform assembly records `native_smoke_tested: false`; the destination runs bundled Bun/herdr and a Node PTY smoke test **before activating** the installed runtime. macOS runtime execution still needs a real Mac to verify it. No build tools are required on the remote PC.
 
 The connection server first honors an explicit `HERDR_WEB_BUNDLE_MANIFEST`, then automatically uses `remote-bundles/manifest-<target OS>-<target CPU>.json` beside the server checkout, and otherwise downloads the versioned release. Local discovery follows the **remote** architecture, independently of the server OS and launch directory. Invalid local/configured manifests fail closed; they do not fall back to a different runtime.
 
-`.github/workflows/remote-bundles.yml` builds and smoke-tests Linux/macOS × x64/arm64 and Windows x64 (assembled on Linux, started on a Windows runner against herdr's own installer), plus a real SSH password-authentication job on Linux. `scripts/windows-host-qa.ts` runs the whole Add PC flow against a real Windows PC (`WINDOWS_QA_HOST`, `WINDOWS_QA_PASSWORD`). Dispatching the workflow produces artifacts; pushing a `remote-vN` tag, where N is `REMOTE_BUNDLE_VERSION` in `shared/machines.ts`, publishes all five archives and the combined `manifest.json` after the checks pass. Raising `REMOTE_BUNDLE_VERSION` makes every connected PC's bridge incompatible until it is updated (**Update bridge…**), so publish the `remote-vN` release before the app release that carries the new number. Locally built bundles and manifests under `remote-bundles/` must be rebuilt too, since an older manifest there fails closed.
+The bundle builds, their smoke tests (on Windows, against herdr's own installer) and the SSH password test are run by hand: see [Verification](#verification). `scripts/windows-host-qa.ts` runs the whole Add PC flow against a real Windows PC (`WINDOWS_QA_HOST`, `WINDOWS_QA_PASSWORD`). The five archives and the combined `manifest.json` of a `remote-vN` release (N is `REMOTE_BUNDLE_VERSION` in `shared/machines.ts`) are published by hand, as [Publishing a bundle release](#publishing-a-bundle-release) describes. Raising `REMOTE_BUNDLE_VERSION` makes every connected PC's bridge incompatible until it is updated (**Update bridge…**), so publish the `remote-vN` release before the app release that carries the new number. Locally built bundles and manifests under `remote-bundles/` must be rebuilt too, since an older manifest there fails closed.
 
 The default manifest is `https://github.com/devswha/herdr-web-ui/releases/download/remote-v<REMOTE_BUNDLE_VERSION>/manifest.json`, with the version from `shared/machines.ts`. Version and SHA-256 checks run on the connection server and SHA-256 is checked again on the remote PC before extraction. Each runtime contains its own version metadata. A malformed/incompatible manifest stops installation before a running bridge is stopped.
+
+### Publishing a bundle release
+
+A `remote-vN` release is made by hand from the commit that raised `REMOTE_BUNDLE_VERSION` to N, once that commit is
+on `main`. It holds five archives, one per platform (`linux-x64`, `linux-arm64`, `darwin-arm64`, `darwin-x64`,
+`win32-x64`), and one `manifest.json`.
+
+1. On each native PC (Linux x64, Linux arm64, macOS arm64, macOS x64), from a checkout of the commit:
+   `bun install --frozen-lockfile`, `bun run typecheck`, `bun run build`, `bun run build:remote` and
+   `bun scripts/remote-bundle-smoke.ts`. A Linux bundle carries the Bun that builds it, so build with the Bun
+   that `package.json` pins (`packageManager`, Bun 1.4.2).
+2. On a Linux PC, `bun run build:remote win32-x64` assembles the Windows bundle. Copy
+   `remote-bundles/herdr-web-ui-win32-x64.tgz` into a Windows checkout of the same commit; there, with herdr
+   installed by its own installer, run `bun install --frozen-lockfile`, `bun scripts/remote-bundle-smoke.ts` and
+   `bun test ./server/windows-native.test.ts`.
+3. Gather the five `remote-bundles/herdr-web-ui-<platform>.tgz` and `remote-bundles/manifest-<platform>.json`
+   files into one `bundles/` directory, and merge the manifests into `bundles/manifest.json`, whose asset URLs
+   point at the release:
+
+   ```python
+   import glob, json
+   version = "N"
+   result = {"version": version, "assets": {}}
+   for path in glob.glob("bundles/manifest-*.json"):
+       data = json.load(open(path))
+       assert data["version"] == version
+       for platform, asset in data["assets"].items():
+           asset["url"] = f"https://github.com/devswha/herdr-web-ui/releases/download/remote-v{version}/" + asset["url"]
+           result["assets"][platform] = asset
+   assert len(result["assets"]) == 5
+   json.dump(result, open("bundles/manifest.json", "w"), indent=2)
+   ```
+
+4. Publish from the same commit: `gh release create remote-vN bundles/*.tgz bundles/manifest.json --title remote-vN
+   --notes 'SSH remote bridge runtimes with SHA-256 manifest.' --latest=false`. Once published, the tag is not
+   moved or deleted.
 
 ## Verification
 
 - `bun test`, `bun run typecheck`, `bun run build`: contracts and existing behavior.
 - `bun run build:remote && bun scripts/remote-bundle-smoke.ts`: packaged startup, private daemon/socket, authenticated handshake.
 - `bun run test:ssh`: actual isolated sshd, fingerprint approval, encrypted-key askpass, app-key registration, first install, two independent herdr daemons with equal pane IDs, HTTP/WS routing, roles, ACK overload, reconnect/restart, cancellation, failed installation, explicit bridge update and host-key-change rejection. Tests write only to their own panes.
-- `SSH_TEST_PASSWORD=1 bun run test:ssh`: the same flow with an ephemeral system account and real password login; requires noninteractive sudo, as configured in CI.
+- `SSH_TEST_PASSWORD=1 bun run test:ssh`: the same flow with an ephemeral system account and real password login; requires noninteractive sudo.
 - `SSH_TEST_KEEP=1 bun run test:ssh`: keeps the fixture until SIGTERM and prints its JSON path. `bun scripts/machines-browser-qa.ts <fixture.json>` checks PC switching, late real upload responses, drafts/held input, destination labels, and desktop/mobile screenshots under `evidence/machines/`.
 - `bun scripts/ssh-password-docker.ts`: real password login to a disposable Debian PC with no Bun/Node/build tools, followed by bundled herdr startup and app-key reconnection; requires Docker and changes no host accounts.
 - `bun run test:ui`: existing composer/session/mobile browser regressions.
 
-macOS Codex discovery uses `lsof` for open rollout files instead of `/proc`; canonical-store validation and the unambiguous transcript matching rules are unchanged. Platform jobs must run on their corresponding runners before all-platform release readiness can be claimed. The Docker password test can run locally without sudo; macOS/arm64 binaries still require their corresponding runners.
+macOS Codex discovery uses `lsof` for open rollout files instead of `/proc`; canonical-store validation and the unambiguous transcript matching rules are unchanged. The platform checks must run on their own PCs before all-platform release readiness can be claimed. The Docker password test can run locally without sudo; macOS/arm64 binaries still require their corresponding PCs.
 
 ### Saved-machine SSH lifecycle fixture
 
-The saved-machine desktop/phone regression runs in the regular browser CI lane. To run it
+The saved-machine desktop/phone regression runs in the browser lane of `bun run check`. To run it
 alone, use `bun run check run --build bun scripts/herdr-profiles-browser-qa.ts` with
 `CHROME_PATH` pointing to an installed Chromium. Set `EVIDENCE_DIR` to save roster and
 installation-approval screenshots for both viewports.

@@ -1,3 +1,3 @@
 ### Maintenance
-- Browser CI reports name the failing assertion and script line, and a read-only CLI ranks
-  failures and flakes from recent workflow attempts.
+- The parallel browser runner (`BROWSER_PARALLEL=1`) names the failing assertion and script line of each
+  script that fails.

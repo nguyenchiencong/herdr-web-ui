@@ -1,16 +1,16 @@
 /**
  * What a release forgets when nobody remembers it: the remote PC bundle, the telemetry Worker and
  * the release metadata. A tree is a release when its package.json version has no `v<version>` tag
- * yet. In CI that is only the change that bumps the version against `--base` (the release PR and
- * main's push of its merge): main keeps the untagged version until the Release run, and the PRs
- * merged meanwhile neither own the release nor can fix it, so they pass. The Release run checks the
- * whole tree again, server changes merged in that window included.
+ * yet. Checked against `--base` (a release PR's base, such as origin/main), only the change that
+ * bumps the version counts: main keeps the untagged version until its release, and the PRs merged
+ * meanwhile neither own the release nor can fix it, so they pass. `--release` checks the whole tree
+ * again, server changes merged in that window included.
  *
- *   bun scripts/release-guards.ts --base <sha>      CI (ci.yml, Fast checks): a remote-vN tag may still be unpublished
- *   bun scripts/release-guards.ts --release X.Y.Z   release.yml preflight: remote-vN must be published from this tree
+ *   bun scripts/release-guards.ts --base <ref>      a release PR: a remote-vN tag may still be unpublished
+ *   bun scripts/release-guards.ts --release X.Y.Z   before tagging X.Y.Z: remote-vN must be published from this tree
  *   bun scripts/release-guards.ts --worker-deployed after `wrangler deploy`: records the Worker in telemetry/deployed.json
  *
- * Reads tags, so a shallow checkout fetches them first (ci.yml does).
+ * Reads tags, so fetch them first (`git fetch --tags`).
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -29,9 +29,8 @@ const MACHINES = "shared/machines.ts";
 export const BUNDLE_PATHSPECS = ["server", "shared", "patches", "bun.lock", "scripts/build-remote-bundle.ts"];
 export const bundleInput = (path: string): boolean => BUNDLE_PATHSPECS.some((spec) => path === spec || path.startsWith(`${spec}/`))
   && !path.endsWith(".test.ts") && !path.endsWith(".md") && !path.startsWith("server/fixtures/");
-/** The Linux bundles carry the bun that builds them (process.execPath), so its pin in this workflow is a bundle input too. */
-export const BUNDLE_WORKFLOW = ".github/workflows/remote-bundles.yml";
-export const bunPins = (workflow: string): string => [...workflow.matchAll(/bun-version:\s*(\S+)/g)].map((match) => match[1]).join(" ");
+/** The Linux bundles carry the bun that builds them (process.execPath): the Bun that package.json pins (packageManager) is a bundle input too. */
+export const bunPin = (packageJson: string): string => (JSON.parse(packageJson) as { packageManager?: string }).packageManager ?? "";
 /** package.json's fields that decide node_modules; its version changes in every release and decides nothing */
 const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "patchedDependencies", "overrides", "trustedDependencies"];
 export const dependencies = (packageJson: string): string => {
@@ -62,11 +61,11 @@ export function bundleProblems({ version, published, changed, publishing }: Bund
   const next = Math.max(version, latest) + 1;
   if (version < latest) return [`REMOTE_BUNDLE_VERSION is ${version} but remote-v${latest} exists: raise it to ${next} in ${MACHINES}.`];
   if (changed === null) {
-    return publishing ? [`remote-v${version} is not published. Push the tag remote-v${version} on this commit, wait for the Remote PC bundles workflow to publish it, then run Release again (docs/remote-pcs.md).`] : [];
+    return publishing ? [`remote-v${version} is not published: build and publish it by hand from this commit, then run the release checks again (docs/remote-pcs.md#publishing-a-bundle-release).`] : [];
   }
   if (changed.length === 0) return [];
   const shown = changed.slice(0, 10).join(", ") + (changed.length > 10 ? `, and ${changed.length - 10} more` : "");
-  return [`The remote bundle's inputs changed since remote-v${version} (${shown}), so remote PCs would keep the old server. Raise REMOTE_BUNDLE_VERSION in ${MACHINES} from ${version} to ${next} in the release PR (or, when it already merged, in a follow-up PR); after it merges, push remote-v${next} on the merged commit and wait for the Remote PC bundles workflow before running Release (docs/development.md#releasing).`];
+  return [`The remote bundle's inputs changed since remote-v${version} (${shown}), so remote PCs would keep the old server. Raise REMOTE_BUNDLE_VERSION in ${MACHINES} from ${version} to ${next} in the release PR (or, when it already merged, in a follow-up PR); after it merges, publish remote-v${next} by hand from the merged commit before the release (docs/development.md#releasing).`];
 }
 
 /** The deployed Worker's source: telemetry/worker.ts and the shared schema it validates with, which is all it bundles. */
@@ -106,9 +105,10 @@ export interface Verdict {
 }
 
 /**
- * Every problem of the release at `cwd`'s HEAD; `publishing` is the Release run itself. `base` is the
- * commit CI compares with: when it already carries this version, HEAD is a change merged between a
- * release PR and its Release run, not the release, and passes. A base that cannot be read is ignored.
+ * Every problem of the release at `cwd`'s HEAD; `publishing` is the `--release` check, run before the
+ * tag. `base` is the commit a release PR compares with: when it already carries this version, HEAD is a
+ * change merged between that release PR and its release, not the release, and passes. A base that
+ * cannot be read is ignored.
  */
 export function check(cwd: string, publishing: boolean, base?: string): Verdict {
   const read = (path: string) => readFileSync(join(cwd, path), "utf8");
@@ -129,10 +129,7 @@ export function check(cwd: string, publishing: boolean, base?: string): Verdict 
     changed = diff.out.split("\n").filter((path) => path && bundleInput(path));
     const tagged = git(cwd, "show", `${tag}^{commit}:package.json`);
     if (tagged.ok && dependencies(tagged.out) !== dependencies(read("package.json"))) changed.push("package.json dependencies");
-    const workflow = git(cwd, "show", `${tag}^{commit}:${BUNDLE_WORKFLOW}`);
-    let pins = "";
-    try { pins = bunPins(read(BUNDLE_WORKFLOW)); } catch { /* no workflow in this tree */ }
-    if (workflow.ok && bunPins(workflow.out) !== pins) changed.push(`${BUNDLE_WORKFLOW} bun-version`);
+    if (tagged.ok && bunPin(tagged.out) !== bunPin(read("package.json"))) changed.push("package.json packageManager");
   }
 
   let deployed: string | undefined;

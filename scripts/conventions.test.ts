@@ -41,7 +41,7 @@ describe("fixed sleeps", () => {
 
   /**
    * scripts/fixed-sleeps.json where this branch left origin/main, or null when git or that ref is
-   * not there (CI's shallow checkout); a stale branch is compared with its own base, not a main
+   * not there (a shallow checkout); a stale branch is compared with its own base, not a main
    * that has moved on.
    */
   const committed = (): Record<string, number> | null => {
@@ -111,7 +111,7 @@ describe("fixed sleeps", () => {
 });
 
 describe("demo transport", () => {
-  // Every push to main redeploys the browser demo, whose server is site/demo/transport.ts: an
+  // The browser demo is built from main and published by hand; its server is site/demo/transport.ts: an
   // endpoint or WS frame it does not answer is a 404 or a dropped frame there (AGENTS.md,
   // Changing a contract).
   const demo = stripComments(read("site/demo/transport.ts"));
