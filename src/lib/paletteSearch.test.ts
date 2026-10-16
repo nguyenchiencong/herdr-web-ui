@@ -1,8 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 
 import type { HerdrPane, PluginActions, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
-import { translate } from "./i18n.ts";
+import { loadLanguage, translate } from "./i18n.ts";
 import { filterPanesByStatus, groupByWorkspace, offeredPluginActions, parseQuery, rankPanes, recentPanes, statusCounts } from "./paletteSearch.ts";
+
+beforeAll(async () => {
+  await loadLanguage("ko");
+});
 
 function pane(paneId: string, fields: Partial<HerdrPane> = {}): HerdrPane {
   return {

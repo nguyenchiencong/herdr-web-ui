@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./PaneTerminal.css";
 
 import { HerdrSocket, type SubmitDelivery, type SubmitResult } from "../lib/ws.ts";
+import { frameBatch } from "../lib/frameBatch.ts";
 import { MachineSession } from "../lib/machineSession.ts";
 import { useMachineSessions } from "../lib/machineSessionContext.tsx";
 import { ViewportIntentGate } from "../lib/viewportIntent.ts";
@@ -748,6 +749,31 @@ export function PaneTerminal({
     let copiedText: string | null = null;
     let selectionGeneration = 0;
     let disposed = false;
+    // The prompt scan and the cursor follow run once per frame, on the screen as it stands then: a burst of
+    // output writes many chunks in one frame, and only the latest screen tells whether a prompt is waiting
+    const scanOutput = ({ owner, generation }: { owner: string; generation: number }): void => {
+      if (disposed || paneRef.current !== owner || generation !== outputGeneration) return;
+      followCursor();
+      const lines: string[] = [];
+      const buffer = term.buffer.active;
+      for (let row = 0; row < buffer.length; row++) {
+        const line = buffer.getLine(row);
+        const text = line?.translateToString(!buffer.getLine(row + 1)?.isWrapped) ?? "";
+        if (line?.isWrapped && lines.length) lines[lines.length - 1] += text;
+        else lines.push(text);
+      }
+      // A masked prompt does not close the grid: a desktop answers it there, as in any terminal,
+      // and the masked input stands by for a phone (#1031). onData keeps what is typed then out
+      // of every draft.
+      const prompt = secretPrompt(lines.join("\n"), term.cols);
+      secretRef.current = prompt;
+      term.options.disableStdin = observeRef.current || heldRef.current;
+      setSecret((previous) => previous?.pane === owner && previous.prompt === prompt ? previous : prompt ? { pane: owner, prompt } : null);
+    };
+    // an acknowledgement goes with the next frame, or 50 ms after its wait began when no frame has run (a hidden
+    // page runs none); the scan goes with the next frame only. Each chunk is still written at once (lib/frameBatch.ts)
+    const acks = frameBatch<() => void>((ack) => ack(), { fallbackMs: 50 });
+    const scan = frameBatch<{ owner: string; generation: number }>(scanOutput);
     // Run after xterm's own copy listener, including for Cmd+C and context-menu
     // Copy. Its buffer contains only the visible part of a scrolled selection.
     const onCopy = (event: ClipboardEvent): void => {
@@ -1112,7 +1138,7 @@ export function PaneTerminal({
         const owner = message.pane_id;
         const generation = outputGeneration;
         term.write(message.data, () => {
-          acknowledge?.();
+          if (acknowledge !== undefined) acks.queue(acknowledge);
           if (disposed) return;
           if (paneRef.current !== owner || generation !== outputGeneration) {
             // output of a pane left behind, or of a dropped connection, was still queued in xterm
@@ -1122,22 +1148,7 @@ export function PaneTerminal({
             return;
           }
           setOutputReady(true);
-          followCursor();
-          const lines: string[] = [];
-          const buffer = term.buffer.active;
-          for (let row = 0; row < buffer.length; row++) {
-            const line = buffer.getLine(row);
-            const text = line?.translateToString(!buffer.getLine(row + 1)?.isWrapped) ?? "";
-            if (line?.isWrapped && lines.length) lines[lines.length - 1] += text;
-            else lines.push(text);
-          }
-          // A masked prompt does not close the grid: a desktop answers it there, as in any terminal,
-          // and the masked input stands by for a phone (#1031). onData keeps what is typed then out
-          // of every draft.
-          const prompt = secretPrompt(lines.join("\n"), term.cols);
-          secretRef.current = prompt;
-          term.options.disableStdin = observeRef.current || heldRef.current;
-          setSecret((previous) => previous?.pane === owner && previous.prompt === prompt ? previous : prompt ? { pane: owner, prompt } : null);
+          scan.queue({ owner, generation });
         });
       } else if (message.type === "watch-data") {
         // a read-only view drawn for this grid: written as it comes, never acknowledged
@@ -1866,6 +1877,8 @@ export function PaneTerminal({
     // freeze before a timer runs, and its attach would keep herdr's own window at the phone's size.
     const hiddenOnTouch = (): boolean => coarseRef.current && document.visibilityState === "hidden";
     const onVisibility = (): void => {
+      // a hidden page runs no frame: an acknowledgement waiting for one would keep the pty paused
+      if (document.visibilityState === "hidden") acks.flush();
       if (inUse()) back();
       else {
         leave();
@@ -1908,6 +1921,8 @@ export function PaneTerminal({
 
     return () => {
       disposed = true;
+      scan.flush();
+      acks.flush();
       term.options.disableStdin = true;
       pendingScopeRef.current = null;
       window.clearInterval(poll);

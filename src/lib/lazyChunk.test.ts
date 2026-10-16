@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
-import { lazyChunk, lazyChunkFailed, onLazyChunkFailure, watchPreloadErrors } from "./lazyChunk.ts";
+import { lazyChunk, lazyChunkFailed, onLazyChunkFailure, settleWithin, watchPreloadErrors, whenIdle } from "./lazyChunk.ts";
+
+/** Puts a global back as it was, removing it when the test is what added it. */
+function restoreGlobal(name: string, value: unknown): void {
+  if (value === undefined) delete (globalThis as Record<string, unknown>)[name];
+  else (globalThis as Record<string, unknown>)[name] = value;
+}
 
 describe("lazyChunk", () => {
   it("loads once while pending and once loaded", async () => {
@@ -79,6 +85,65 @@ describe("lazyChunk", () => {
       expect(told).toBe(0);
     } finally {
       stop();
+    }
+  });
+});
+
+describe("settleWithin", () => {
+  it("resolves when the work settles (a failed one too), and when the time runs out where it never does", async () => {
+    await settleWithin(Promise.resolve("loaded"), 60_000);
+    await settleWithin(Promise.reject(new Error("failed")), 60_000);
+    await settleWithin(new Promise<never>(() => {}), 5);
+  });
+});
+
+describe("whenIdle", () => {
+  it("runs at the browser's idle time within its timeout, and a cancel is handed to the browser", () => {
+    const host = globalThis as unknown as Record<string, unknown>;
+    const saved = { request: host.requestIdleCallback, cancel: host.cancelIdleCallback };
+    const requested: { run: () => void; timeout: number }[] = [];
+    const cancelled: number[] = [];
+    host.requestIdleCallback = (run: () => void, options: { timeout: number }) => {
+      requested.push({ run, timeout: options.timeout });
+      return requested.length;
+    };
+    host.cancelIdleCallback = (id: number) => {
+      cancelled.push(id);
+    };
+    try {
+      const ran: string[] = [];
+      whenIdle(() => ran.push("idle"), 300);
+      expect(requested.map((call) => call.timeout)).toEqual([300]);
+      requested[0]!.run();
+      expect(ran).toEqual(["idle"]);
+      const cancel = whenIdle(() => ran.push("cancelled"));
+      expect(requested.map((call) => call.timeout)).toEqual([300, 2_000]);
+      cancel();
+      expect(cancelled).toEqual([2]);
+    } finally {
+      restoreGlobal("requestIdleCallback", saved.request);
+      restoreGlobal("cancelIdleCallback", saved.cancel);
+    }
+  });
+
+  it("waits the given time where requestIdleCallback is missing, and a cancel stops the work", async () => {
+    const host = globalThis as unknown as Record<string, unknown>;
+    const saved = host.requestIdleCallback;
+    delete host.requestIdleCallback;
+    try {
+      const ran = await new Promise<string>((resolve) => {
+        whenIdle(() => resolve("ran"), 5);
+      });
+      expect(ran).toBe("ran");
+      let cancelledRan = false;
+      const cancel = whenIdle(() => {
+        cancelledRan = true;
+      }, 5);
+      cancel();
+      await settleWithin(new Promise<never>(() => {}), 30);
+      expect(cancelledRan).toBe(false);
+    } finally {
+      restoreGlobal("requestIdleCallback", saved);
     }
   });
 });

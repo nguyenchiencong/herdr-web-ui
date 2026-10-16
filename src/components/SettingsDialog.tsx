@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Monitor, Plus, Search, Star, X } from "lucide-react";
 
 import "./SettingsDialog.css";
 
 import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
+import { PAGES } from "../lib/settingsPages.ts";
 import { SHORTCUTS, formatKeys, isMacPlatform, modKeyLabel, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
 import { SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
 import { isReservedShortcutKey } from "../lib/shortcutBindings.ts";
@@ -193,21 +194,6 @@ function FontFamilyInput({ value, label, onCommit, fixedWidthFor = null }: { val
 
 
 type SettingsPage = SettingsPageId;
-
-/** The pages in the order the list shows them: what is looked at first, then what is set once. */
-export const PAGES: readonly { id: SettingsPage; icon: LucideIcon }[] = [
-  { id: "appearance", icon: Palette },
-  { id: "chat", icon: MessageSquare },
-  { id: "terminal", icon: SquareTerminal },
-  { id: "alerts", icon: Bell },
-  { id: "voice", icon: Mic },
-  { id: "usage", icon: Gauge },
-  { id: "shortcuts", icon: Keyboard },
-  { id: "devices", icon: Smartphone },
-  { id: "remote", icon: Monitor },
-  { id: "integrations", icon: Plug },
-  { id: "about", icon: Info },
-];
 
 /** The sheet's own breakpoint (`.modal`, styles.css): under it the list and a page take turns. */
 const NARROW_QUERY = "(max-width: 640px)";

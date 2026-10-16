@@ -3,16 +3,15 @@
  * `t("Worked for {duration}", { duration })`. A key a dictionary (i18n.ko.ts, i18n.ja.ts,
  * i18n.zh.ts) lacks comes back in English, so a new string is never blank, and
  * src/lib/i18n.test.ts scans the code for every `t("…")` and fails when one is missing from
- * any dictionary.
+ * any dictionary. A dictionary is a chunk of its own, loaded by `loadLanguage` before the UI draws in
+ * its language (main.tsx, and SettingsProvider when the language changes).
  *
  * Components take `t` from `useT()`, whose identity changes with the language so memoized
  * work is redone. Helpers outside React (status labels, shortcut labels, work summaries)
  * call the module-level `t`, which reads the language the SettingsProvider last set.
  */
 import { useMemo } from "react";
-import { JA } from "./i18n.ja.ts";
-import { KO } from "./i18n.ko.ts";
-import { ZH } from "./i18n.zh.ts";
+import { lazyChunk } from "./lazyChunk.ts";
 import { useSettings } from "./settings.ts";
 
 // in the order the Language menu lists them
@@ -25,7 +24,33 @@ export const LANGUAGE_NAMES: Record<LanguageSetting, string> = { system: "System
 /** The BCP 47 tag for `<html lang>` and Intl formatting. */
 export const LOCALE_TAGS: Record<Language, string> = { en: "en-US", ko: "ko-KR", ja: "ja-JP", zh: "zh-CN" };
 
-const DICTIONARIES: Record<Language, Record<string, string>> = { en: {}, ko: KO, ja: JA, zh: ZH };
+// English is the key itself, so it has no dictionary. Every other language's dictionary is a chunk of
+// its own, fetched the first time the UI is in that language; lazyChunk tells a failed fetch (the app
+// offers a reload) and never tries it again.
+const LOAD_DICTIONARY: Record<Exclude<Language, "en">, () => Promise<Record<string, string>>> = {
+  ko: lazyChunk(() => import("./i18n.ko.ts").then((module) => module.KO)),
+  ja: lazyChunk(() => import("./i18n.ja.ts").then((module) => module.JA)),
+  zh: lazyChunk(() => import("./i18n.zh.ts").then((module) => module.ZH)),
+};
+const DICTIONARIES: Partial<Record<Language, Record<string, string>>> = {};
+
+/** Whether `language`'s text can be drawn now: English always, another language once its dictionary is in. */
+export function isLanguageLoaded(language: Language): boolean {
+  return language === "en" || DICTIONARIES[language] !== undefined;
+}
+
+/**
+ * Brings `language`'s dictionary in (at once for English) and resolves once it is. A dictionary that
+ * fails to load leaves its strings in English, the same fallback a key without a translation gets.
+ */
+export async function loadLanguage(language: Language): Promise<void> {
+  if (language === "en" || DICTIONARIES[language] !== undefined) return;
+  try {
+    DICTIONARIES[language] = await LOAD_DICTIONARY[language]();
+  } catch {
+    DICTIONARIES[language] = {};
+  }
+}
 
 /**
  * `system` follows the browser: the first tag in its list for a supported language picks it
@@ -60,7 +85,7 @@ export type Vars = Record<string, string | number>;
 
 /** The text for `key` in `language`, placeholders filled; pure, for tests and for both `t`s. */
 export function translate(language: Language, key: string, vars?: Vars): string {
-  const text = DICTIONARIES[language][key] ?? key;
+  const text = DICTIONARIES[language]?.[key] ?? key;
   return vars === undefined ? text : text.replace(/\{(\w+)\}/g, (match, name: string) => (name in vars ? String(vars[name]) : match));
 }
 

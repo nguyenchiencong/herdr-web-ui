@@ -7,16 +7,21 @@ import "./fonts/fonts.css";
 import "./styles.css";
 import { App } from "./App.tsx";
 import { AppCrash, CrashProbe } from "./components/AppCrash.tsx";
-import { FileReader } from "./components/FileReader.tsx";
+import { lazyDialog } from "./components/lazyDialog.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
 import { readerFromSearch } from "./lib/fileReader.ts";
-import { SettingsProvider } from "./lib/settings.ts";
+import { loadLanguage, resolveLanguage } from "./lib/i18n.ts";
+import { settleWithin } from "./lib/lazyChunk.ts";
+import { loadSettings, SettingsProvider } from "./lib/settings.ts";
 import { isReportableWindowError } from "./lib/uncaughtErrors.ts";
 import "./lib/viewport.ts";
 import { watchSheetExits } from "./lib/sheets.ts";
 
 // a phone's sheets drop back down however they close (lib/sheets.ts)
 watchSheetExits();
+
+// a markdown file opened in a tab of its own loads only that page's code
+const FileReader = lazyDialog(() => import("./components/FileReader.tsx").then((module) => module.FileReader));
 
 const container = document.getElementById("root");
 if (!container) throw new Error("#root is missing from index.html");
@@ -34,7 +39,10 @@ window.addEventListener("unhandledrejection", (event) => console.error("herdr-we
 // A render error the parts below do not catch would unmount the whole tree and leave the page
 // blank, and an installed web app has no reload button: AppCrash offers one. It sits outside
 // SettingsProvider, which may be what threw.
-createRoot(container).render(
+// The page opens in its language once that dictionary is in, but waits no longer than this for it:
+// past that the app draws in English, and SettingsProvider switches when the dictionary arrives.
+const LANGUAGE_WAIT_MS = 1_500;
+void settleWithin(loadLanguage(resolveLanguage(loadSettings().language)), LANGUAGE_WAIT_MS).then(() => createRoot(container).render(
   <StrictMode>
     <RenderBoundary resetKey={null} fallback={(_retry, error) => <AppCrash error={error} />}>
       <CrashProbe region="root" />
@@ -43,4 +51,4 @@ createRoot(container).render(
       </SettingsProvider>
     </RenderBoundary>
   </StrictMode>,
-);
+));

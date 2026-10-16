@@ -672,7 +672,7 @@ export class HerdrSocket {
     return this.connected && this.features.has("conversation-watch");
   }
 
-  /** Capture connection AND subscription before xterm's asynchronous write. Never queue ACKs. */
+  /** Capture connection AND subscription before xterm's asynchronous write: the ACK is sent only while both are still current, never on a later connection. */
   outputAcknowledgement(message: Extract<ServerMessage, { type: "pty-data" }>): (() => void) | undefined {
     const flow = message.flow;
     if (!flow) return undefined;

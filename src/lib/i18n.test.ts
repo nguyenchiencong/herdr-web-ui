@@ -1,10 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { JA } from "./i18n.ja.ts";
 import { KO } from "./i18n.ko.ts";
 import { ZH } from "./i18n.zh.ts";
-import { resolveLanguage, translate } from "./i18n.ts";
+import { loadLanguage, resolveLanguage, translate } from "./i18n.ts";
 
 const root = join(import.meta.dir, "..");
 
@@ -110,7 +110,24 @@ describe.each(Object.entries(DICTIONARIES))("%s dictionary", (_name, dictionary)
   });
 });
 
+describe("dictionaries load on demand", () => {
+  it("starts with English only, and loads the one language asked for", async () => {
+    // a fresh copy of the module: another test file in this process may have loaded a dictionary already
+    const fresh = (await import(`./i18n.ts?fresh=${crypto.randomUUID()}`)) as typeof import("./i18n.ts");
+    expect(fresh.isLanguageLoaded("en")).toBe(true);
+    expect(["ko", "ja", "zh"].map((language) => fresh.isLanguageLoaded(language as "ko"))).toEqual([false, false, false]);
+    expect(fresh.translate("ko", "Settings")).toBe("Settings");
+    await fresh.loadLanguage("ko");
+    expect(fresh.translate("ko", "Settings")).toBe(KO["Settings"]!);
+    expect(fresh.isLanguageLoaded("ko")).toBe(true);
+    expect(fresh.isLanguageLoaded("ja")).toBe(false);
+  });
+});
+
 describe("translate", () => {
+  beforeAll(async () => {
+    for (const language of ["ko", "ja", "zh"] as const) await loadLanguage(language);
+  });
   it("fills placeholders, falls back to English, and leaves unknown placeholders alone", () => {
     expect(translate("en", "Worked for {duration}", { duration: "7s" })).toBe("Worked for 7s");
     expect(translate("ko", "Worked for {duration}", { duration: "7초" })).toBe(KO["Worked for {duration}"]!.replace("{duration}", "7초"));

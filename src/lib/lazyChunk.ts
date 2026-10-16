@@ -56,3 +56,28 @@ export function lazyChunk<T>(load: () => Promise<T>): () => Promise<T> {
     return pending;
   };
 }
+
+/**
+ * Runs `run` when the browser has no urgent work, or `waitMs` later where it has no requestIdleCallback.
+ * Returns the cancel an effect's cleanup calls.
+ */
+export function whenIdle(run: () => void, waitMs = 2_000): () => void {
+  if (typeof globalThis.requestIdleCallback === "function") {
+    const id = globalThis.requestIdleCallback(run, { timeout: waitMs });
+    return () => globalThis.cancelIdleCallback(id);
+  }
+  const timer = globalThis.setTimeout(run, waitMs);
+  return () => globalThis.clearTimeout(timer);
+}
+
+/** Resolves when `work` settles, or `ms` later at the latest: a part that arrives slowly is not waited for past that. Never rejects. */
+export function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const done = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    work.then(done, done);
+  });
+}

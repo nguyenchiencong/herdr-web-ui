@@ -13,8 +13,8 @@ import "./ChatTimeline.css";
 import { AgentMark } from "./AgentMark.tsx";
 import { AnimatedHeight } from "./AnimatedHeight.tsx";
 import { Markdown, ReservedImage } from "./Markdown.tsx";
-import { ImageLightbox } from "./ImageLightbox.tsx";
 import { PromptCard } from "./PromptCard.tsx";
+import { lazyDialog } from "./lazyDialog.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { loadChatTimeline, loadedChatTimeline, useChatTimeline } from "./chatTimelineLoader.ts";
 import { ChatMinimap } from "./ChatMinimap.tsx";
@@ -22,7 +22,7 @@ import { minimapTurns } from "../lib/chatMinimap.ts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { appendChatRowSlots, createChatRowSlots, prependChatRowSlots } from "../lib/chatRows.ts";
 import { ChatDetails, ChatRowMemoryContext, useChatRowToggle, type ChatRowMemory } from "../lib/chatRowState.tsx";
-import { turnRevision } from "../lib/turnRevision.ts";
+import { shareUnchangedTurns, turnRevision } from "../lib/turnRevision.ts";
 import { settingChanges, type SettingChange } from "../lib/sessionMarkers.ts";
 import { modelLabel } from "../lib/modelName.ts";
 import { useWholeOutput as useScopedOutput } from "../lib/useWholeOutput.ts";
@@ -63,6 +63,9 @@ import { formatTokens, sameMessage } from "../lib/compose.ts";
 import { formatElapsed, taskCallItems, taskResultMarkdown } from "../lib/omoTasks.ts";
 import { sendUserFileCall } from "../lib/sendUserFile.ts";
 import { shouldFoldUserMessage } from "../lib/userMessageFold.ts";
+
+// opened only from a picture in the chat, so its code loads then
+const ImageLightbox = lazyDialog(() => import("./ImageLightbox.tsx").then((module) => module.ImageLightbox));
 
 /** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
 const ChatPaneContext = createContext<string | null>(null);
@@ -156,6 +159,11 @@ const EMPTY_STATE: ChatState = { source: "conversation", turns: [], messages: []
 /** The view of a structured (not scrollback) answer. */
 function conversationState(conversation: ConversationResponse): ChatState {
   return { source: "conversation", conversationSource: conversation.source, turns: conversation.turns, messages: [], truncated: false, activity: conversation.activity };
+}
+
+/** An answer's content as a string, each turn by its revision: an unchanged read is told from a changed one without serializing the whole page. */
+function answerSignature(state: ChatState): string {
+  return JSON.stringify({ ...state, turns: state.turns.map((turn) => turnRevision(turn, true)) });
 }
 
 
@@ -981,11 +989,12 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
         slots.current = { ...slots.current, rows: slots.current.rows.slice(0, count) };
       }
     }
-    const nextSignature = JSON.stringify(next);
+    const nextSignature = answerSignature(next);
     if (nextSignature !== signature.current) {
       if (signature.current !== "" && !stickToBottom.current) setNewMessages(true);
       signature.current = nextSignature;
-      setState(next);
+      // the turns this answer left unchanged keep the objects they were drawn from, so their memoized rows skip the render
+      setState((previous) => ({ ...next, turns: shareUnchangedTurns(previous.turns, next.turns) }));
     }
     setError(null); setErrorStatus(null); setLoaded(true);
     // only an answer laid out in full is skipped when it comes back unchanged: a read

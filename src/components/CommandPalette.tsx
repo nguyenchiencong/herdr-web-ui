@@ -17,7 +17,7 @@ import { shortcutDisplayKeys, formatKeys, type ShortcutId } from "../lib/shortcu
 import { useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { displayPaneTitle, StatusBadge } from "./Sidebar.tsx";
-import { PAGES } from "./SettingsDialog.tsx";
+import { PAGES } from "../lib/settingsPages.ts";
 import { folderName, placeLine } from "../lib/paneName.ts";
 import { agentTabName } from "../lib/sidebarAgents.ts";
 import { tabLabel } from "../lib/tabName.ts";

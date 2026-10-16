@@ -1,8 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { translate } from "../lib/i18n.ts";
+import { loadLanguage, translate } from "../lib/i18n.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { PendingMessages } from "./PendingMessages.tsx";
 
@@ -22,6 +22,9 @@ const render = (code: string, message: string, languages: string[]): string => {
 };
 
 describe("a pending row's refusal note", () => {
+  beforeAll(async () => {
+    await loadLanguage("ko");
+  });
   it("says a held-input refusal in the reader's language, not the raw English reason", () => {
     const held = translate("ko", "Not sent: send or discard the held input first.");
     expect(held).not.toBe("Not sent: send or discard the held input first.");

@@ -1,9 +1,11 @@
-import { type CSSProperties, type DragEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { type CSSProperties, type DragEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
 import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
 import { deviceLabel, takePairCode } from "./lib/phone.ts";
+import { whenIdle } from "./lib/lazyChunk.ts";
+import { keepIfSame, sameData } from "./lib/sameData.ts";
 import { alertPaneTitle, displayPaneTitle } from "./components/Sidebar.tsx";
 import { PaneCanvas } from "./components/PaneCanvas.tsx";
 import { MachineSessionsProvider } from "./lib/machineSessionContext.tsx";
@@ -12,21 +14,18 @@ import { PANE_TABPANEL_ID, paneTabPanelLabel } from "./lib/paneRegion.ts";
 import { worktreeRepoName } from "./lib/composerStrip.ts";
 import { AccessGate } from "./components/AccessGate.tsx";
 import { AgentMark } from "./components/AgentMark.tsx";
-import { NewSessionDialog, type NewTabTarget } from "./components/NewSessionDialog.tsx";
+import type { NewTabTarget } from "./components/NewSessionDialog.tsx";
 import { passingFolder, recentDirectories } from "./lib/recent-directories.ts";
 import { usePreferencesSync } from "./lib/preferencesSync.ts";
 import { TabStrip } from "./components/TabStrip.tsx";
-import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { loadedOnSettingsEntry, onSettingsHistory, recordSettings, settingsEntry } from "./lib/settingsHistory.ts";
 import { fileFromLink, isNavigation, linkSearch, linksSomewhere, NAV_KEY, readLink, resolveLink, slugOf, type AppLink, type CreateDraft, type LinkNote } from "./lib/deepLink.ts";
 import { copyText } from "./lib/clipboard.ts";
-import { CommandPalette } from "./components/CommandPalette.tsx";
 import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
-import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { focusWorkspaceListToggle } from "./lib/focus.ts";
 import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
@@ -57,10 +56,7 @@ import { useUpdates } from "./lib/updates.ts";
 import { UpdateNotice } from "./components/UpdateControls.tsx";
 import { LanExposureNotice } from "./components/LanExposureNotice.tsx";
 import { TelemetryNotice } from "./components/TelemetryControls.tsx";
-import { FilesDialog } from "./components/FilesDialog.tsx";
 import { folderQueryFor } from "./lib/paletteFolders.ts";
-import { FileViewer } from "./components/FileViewer.tsx";
-import { RepoDiffViewer } from "./components/RepoDiffViewer.tsx";
 import { OpenFileContext } from "./lib/filePaths.ts";
 import { useFileViewer } from "./lib/useFileViewer.ts";
 import { useRepoDiffViewer } from "./lib/useRepoDiffViewer.ts";
@@ -76,20 +72,23 @@ import { dockPane, draggedPane, dropSide, otherSlot, PANE_DRAG_TYPE, sameTarget,
 import { paneDrag } from "./lib/paneDrag.ts";
 import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
+import { lazyDialog } from "./components/lazyDialog.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
+
+// the dialogs load the first time they are needed, so a session that never opens one never fetches its code
+const SettingsDialog = lazyDialog(() => import("./components/SettingsDialog.tsx").then((module) => module.SettingsDialog));
+const CommandPalette = lazyDialog(() => import("./components/CommandPalette.tsx").then((module) => module.CommandPalette));
+const NewSessionDialog = lazyDialog(() => import("./components/NewSessionDialog.tsx").then((module) => module.NewSessionDialog));
+const MachineDialog = lazyDialog(() => import("./components/MachineDialog.tsx").then((module) => module.MachineDialog));
+const FilesDialog = lazyDialog(() => import("./components/FilesDialog.tsx").then((module) => module.FilesDialog));
+const FileViewer = lazyDialog(() => import("./components/FileViewer.tsx").then((module) => module.FileViewer));
+const RepoDiffViewer = lazyDialog(() => import("./components/RepoDiffViewer.tsx").then((module) => module.RepoDiffViewer));
 
 const APP_TITLE = "herdr web ui";
 /** how soon after a key press a focus counts as the user's own (lastKeyAtRef) */
 const KEY_FOCUS_MS = 1000;
 const POLL_MS = 5000;
 
-/**
- * Polls and the event stream hand over fresh objects every few seconds even when nothing
- * changed; storing them re-rendered the whole app (the chat transcript included) each time.
- */
-function sameData(a: unknown, b: unknown): boolean {
-  return a === b || JSON.stringify(a) === JSON.stringify(b);
-}
 /** trailing debounce for push-triggered refetches: bursts of events become one fetch */
 const REFETCH_DEBOUNCE_MS = 500;
 
@@ -150,6 +149,15 @@ function Brand() {
       </span>
     </h1>
   );
+}
+
+/**
+ * The open-file callback of one pane, memoized on the pane: a callback built fresh on each App render
+ * would re-render every consumer of OpenFileContext (each Markdown inline element in the chat).
+ */
+function PaneOpenFileProvider({ machineId, paneId, openFile, children }: { machineId: string; paneId: string | null; openFile: ReturnType<typeof useFileViewer>["openFile"]; children: ReactNode }) {
+  const open = useMemo(() => (paneId === null ? null : (path: string) => openFile({ path, paneId, machineId })), [openFile, machineId, paneId]);
+  return <OpenFileContext.Provider value={open}>{children}</OpenFileContext.Provider>;
 }
 
 export function App() {
@@ -352,6 +360,11 @@ export function App() {
   // a tab dragged out of its strip (lib/paneDrag.ts)
   const tabDrag = useSyncExternalStore(paneDrag.subscribe, paneDrag.snapshot);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // a dialog mounts when first opened and then stays mounted, as it always did, so its state survives a close
+  const [paletteUsed, setPaletteUsed] = useState(false);
+  useEffect(() => { if (paletteOpen) setPaletteUsed(true); }, [paletteOpen]);
+  // the palette and the new-session dialog open from the keyboard: their code is fetched while the app is idle, so they open at once
+  useEffect(() => whenIdle(() => { CommandPalette.preload(); NewSessionDialog.preload(); }), []);
   const [paletteQuery, setPaletteQuery] = useState("");
   const openPalette = useCallback((query?: unknown) => { setPaletteQuery(paletteOpenQuery(query)); setPaletteOpen(true); }, []);
   const paneControls = useRef<PaneControls | null>(null);
@@ -371,6 +384,8 @@ export function App() {
   const { viewing: diffViewing, openDiff, closeDiff } = useRepoDiffViewer();
   // a link to Settings opens it on its page, for that first opening alone
   const [settingsOpen, setSettingsOpen] = useState(() => initialLink?.settings != null);
+  const [settingsUsed, setSettingsUsed] = useState(settingsOpen);
+  useEffect(() => { if (settingsOpen) setSettingsUsed(true); }, [settingsOpen]);
   const [settingsLinkPage, setSettingsLinkPage] = useState<string | null>(() => initialLink?.settings ?? null);
   // the group on that page a link named: in the address while that page is shown
   const [settingsLinkSection, setSettingsLinkSection] = useState<string | null>(() => initialLink?.section ?? null);
@@ -393,6 +408,8 @@ export function App() {
   }), [closeSettings]);
   useEffect(() => { if (!settingsOpen) recordSettings([]); }, [settingsOpen]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [newSessionUsed, setNewSessionUsed] = useState(false);
+  useEffect(() => { if (newSessionOpen) setNewSessionUsed(true); }, [newSessionOpen]);
   // the New workspace dialog in the address (lib/deepLink.ts): the fields a link filled for this
   // opening, and what the fields say now
   const [newPrefill, setNewPrefill] = useState<Omit<CreateDraft, "kind"> | null>(null);
@@ -430,7 +447,7 @@ export function App() {
   snapshotRef.current = snapshot;
 
   const loadHealth = useCallback(async () => {
-    try { const next = await fetchBridgeHealth(); setLocked(next.auth.required && !next.auth.authenticated); setLockReason(next.auth.reason ?? null); setAuth(next.auth); }
+    try { const next = await fetchBridgeHealth(); setLocked(next.auth.required && !next.auth.authenticated); setLockReason(next.auth.reason ?? null); setAuth((previous) => keepIfSame(previous, next.auth)); }
     catch { /* retain the gate while the connection server restarts */ }
     try { const next = await fetchHealth(); setHealth((previous) => sameData(previous, next) ? previous : next); } catch { setHealth(null); }
   }, []);
@@ -1580,7 +1597,7 @@ export function App() {
                 <main className="terminal-host">
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}
-                    renderPane={(item, itemActive, herdrSplit) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId }) : null}>
+                    renderPane={(item, itemActive, herdrSplit) => <PaneOpenFileProvider machineId={machineId} paneId={item?.pane_id ?? null} openFile={openFile}>
                       <PaneTerminal
                         title={item ? displayPaneTitle(item) : active ? selectedTitle : null}
                         // Wait for the roster before attaching: the loading placeholder is replaced
@@ -1614,7 +1631,7 @@ export function App() {
                         onConnectionChange={active && itemActive ? (next) => { setConnected(next); if (next) setOutputStopped(false); } : undefined}
                         onServerMessage={active && itemActive ? handleServerMessage : undefined}
                       />
-                    </OpenFileContext.Provider>} />
+                    </PaneOpenFileProvider>} />
                   </div>
                 </main>
                 </RenderBoundary>
@@ -1628,7 +1645,7 @@ export function App() {
         </OpenFileContext.Provider>
       </div>
 
-      <MachineContext.Provider value={newSessionMachineId}><NewSessionDialog
+      <MachineContext.Provider value={newSessionMachineId}>{(newSessionOpen || newSessionUsed) && <NewSessionDialog
         key={newSessionMachineId}
         machineName={machines.find((m) => m.id === newSessionMachineId)?.name ?? newSessionMachineId}
         worktrees={machines.find((m) => m.id === newSessionMachineId)?.snapshot?.workspaces.flatMap((workspace) => workspace.worktree?.is_linked_worktree ? [workspace.worktree.checkout_path] : []) ?? []}
@@ -1644,7 +1661,7 @@ export function App() {
           selectTarget(newSessionMachineId, paneId);
           void load();
         }}
-      /></MachineContext.Provider>
+      />}</MachineContext.Provider>
       {machineDialog && <MachineDialog updateRemote={updateRemote} machine={machineDialog === "new" ? undefined : machineDialog} onClose={closeMachineDialog} onConnected={(id) => { closeMachineDialog(); selectTarget(id, null); void load(); }} />}
       <Droplet onOpen={(machineId, paneId) => {
         // an ended pane's card outlives the pane: the refetch has dropped it, and selecting it attaches nothing
@@ -1653,7 +1670,7 @@ export function App() {
         setFilesOpen(false);
         selectTargetRef.current(machineId, paneId);
       }} />
-      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={viewing !== null || diffViewing !== null} />
+      {(settingsOpen || settingsUsed) && <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={viewing !== null || diffViewing !== null} />}
       {filesOpen && selectedPane && (
         <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={selectedPane.pane_id} viewing={viewing !== null || diffViewing !== null} onOpenFile={viewFile}
           onOpenDiff={(comparison, file) => openDiff({ machineId: selectedMachineId, paneId: selectedPane.pane_id, directory: selectedPane.foreground_cwd ?? selectedPane.cwd ?? null, ...comparison, path: file.path, oldPath: file.old_path })}
@@ -1666,7 +1683,7 @@ export function App() {
       {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
         <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path })} keyboardActive={!settingsOpen} />
       </MachineContext.Provider>}
-      <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />
+      {(paletteOpen || paletteUsed) && <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />}
     </div></MachineContext.Provider></MachineSessionsProvider>
   );
 }

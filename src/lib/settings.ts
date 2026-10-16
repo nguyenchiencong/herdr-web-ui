@@ -7,8 +7,8 @@
 
 import type { TelemetrySettings } from "../../shared/telemetry.ts";
 import { SHARED_SETTING_KEYS, type SharedSettingKey } from "../../shared/preferences.ts";
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useReducer, useState, type ReactNode } from "react";
+import { currentLanguage, isLanguageLoaded, LANGUAGE_SETTINGS, loadLanguage, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
 import { fontScale, sanitizeUiFontSize } from "./typography.ts";
@@ -583,7 +583,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     window.addEventListener("languagechange", onChange);
     return () => window.removeEventListener("languagechange", onChange);
   }, []);
-  const resolvedLanguage = resolveLanguage(settings.language, browserLanguages);
+  const requestedLanguage = resolveLanguage(settings.language, browserLanguages);
+  // a language is drawn once its dictionary is in: until then the UI keeps the language it has
+  const [, dictionaryLoaded] = useReducer((count: number) => count + 1, 0);
+  useEffect(() => {
+    if (isLanguageLoaded(requestedLanguage)) return;
+    let live = true;
+    void loadLanguage(requestedLanguage).then(() => { if (live) dictionaryLoaded(); });
+    return () => { live = false; };
+  }, [requestedLanguage]);
+  const resolvedLanguage = isLanguageLoaded(requestedLanguage) ? requestedLanguage : currentLanguage();
   // helpers outside React read this during the same render, so it is set before the children render
   setCurrentLanguage(resolvedLanguage);
 

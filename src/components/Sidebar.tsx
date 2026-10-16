@@ -13,7 +13,8 @@ import { AgentMark } from "./AgentMark.tsx";
 import { WorkspaceFavicon } from "./WorkspaceFavicon.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
-import { WorktreeDialog, type WorktreeDialogMode } from "./WorktreeDialog.tsx";
+import type { WorktreeDialogMode } from "./WorktreeDialog.tsx";
+import { lazyDialog } from "./lazyDialog.tsx";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
 import { folderName, shortPathTitle, stripPaneChrome, taskRowLines } from "../lib/paneName.ts";
 import { ApiError } from "../lib/api.ts";
@@ -29,6 +30,9 @@ import { worktreeLabel } from "../lib/worktreeName.ts";
 import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { currentSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneWorkspacePins, setSidebarPins, splitPinnedGroups, subscribeSidebarPins, toggleSidebarPin, workspacePinKey, type WorkspaceGroup } from "../lib/sidebarPins.ts";
+
+// opened from a workspace's menu, so its code loads then
+const WorktreeDialog = lazyDialog(() => import("./WorktreeDialog.tsx").then((module) => module.WorktreeDialog));
 
 const ERROR_NOTE_MS = 5000;
 
