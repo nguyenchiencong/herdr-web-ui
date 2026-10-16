@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, Page } from "playwright-core";
 import { herdrRpc, paneSendText, workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
+import { shellCommandLine } from "../server/shell-agent.ts";
+
+/** Types `clear; node <script>` and Enter into the pane. A Windows pane is PowerShell, where the path needs quotes to hold its spaces. */
+function runNodeLine(script: string): string {
+  return process.platform === "win32" ? `clear; ${shellCommandLine("powershell", "node", [script])}\r` : `clear; node ${script}\r`;
+}
 
 /** A plain left drag in the desktop terminal selects and copies instead of reaching herdr. */
 export async function checkTerminalCopy(browser: Browser, origin: string): Promise<void> {
@@ -17,7 +23,9 @@ process.stdout.write("\\x1b[2J\\x1b[H");
 process.stdout.write("DRAGCOPY-first-line\\r\\n");
 process.stdout.write("DRAGCOPY-second-line\\r\\n");
 process.stdout.write("LONG-" + "x".repeat(${300}) + "-END\\r\\n");
-setInterval(() => {}, 1000);
+// herdr's Ctrl+C does not interrupt a program in a Windows pane, so this one ends on the byte as input
+process.stdin.setRawMode(true); process.stdin.resume();
+process.stdin.on("data", (chunk) => { if (String(chunk) === "\\x03") process.exit(0); });
 `);
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   try {
@@ -78,7 +86,7 @@ setInterval(() => {}, 1000);
     }));
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
     await page.locator(".pane-terminal .xterm-rows").waitFor();
-    await paneSendText(pane, `clear; node ${script}\r`);
+    await paneSendText(pane, runNodeLine(script));
     const first = page.locator(".pane-terminal .xterm-rows > div", { hasText: "DRAGCOPY-first-line" });
     await first.waitFor();
 
@@ -269,7 +277,7 @@ for (let i = 0; i < 300; i++) process.stdout.write("S" + String(i).padStart(3, "
 setInterval(() => {}, 1000);
 `);
     await paneSendText(pane, `\x03`);
-    await paneSendText(pane, `clear; node ${numbered}\r`);
+    await paneSendText(pane, runNodeLine(numbered));
     const rowWith = (text: string) => page.locator(".pane-terminal .xterm-rows > div", { hasText: new RegExp(`^${text}\\s*$`) });
     await rowWith("S299").waitFor();
     const topRow = (): Promise<number> => page.evaluate(() => {
@@ -297,7 +305,8 @@ setInterval(() => {}, 1000);
     await press();
     await page.mouse.move(screen.x + 1, screen.y + screen.height + 20, { steps: 1 });
     await page.mouse.up();
-    assert.equal(lines(await filled()).at(-1), 299, "a drag past the bottom edge takes the last line");
+    // the copy may end with the blank row under the last line: the last line is the last one with text
+    assert.equal(lines((await filled()).trimEnd()).at(-1), 299, "a drag past the bottom edge takes the last line");
     await page.mouse.wheel(0, lineHeight); // drops the highlight
     await page.waitForTimeout(2600); // the copy note fades before the evidence below
 
@@ -344,7 +353,9 @@ setInterval(() => {}, 1000);
     await page.evaluate(() => navigator.clipboard.writeText(""));
     const beforeKey = inputs.length;
     await page.keyboard.press("Control+c");
-    assert.equal(await filled(), edgeText, "Ctrl+C copies the whole scrolled range");
+    // in a Windows browser xterm joins a drag's selection with CRLF, while Ctrl+C copies herdr's text with LF: compare the lines
+    const lf = (text: string): string => text.replace(/\r\n/g, "\n");
+    assert.equal(lf(await filled()), lf(edgeText), "Ctrl+C copies the whole scrolled range");
     assert.deepEqual(inputs.slice(beforeKey), [], "Ctrl+C over a selection sends no ^C");
 
     // the next wheel outside a drag drops the stale highlight

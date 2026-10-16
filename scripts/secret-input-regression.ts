@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser } from "playwright-core";
 import { createServer } from "../server/index.ts";
-import { paneSendText, workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
+import { paneSendKeys, paneSendText, workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
+import { shellCommandLine } from "../server/shell-agent.ts";
 import { chromePath } from "./chrome-path.ts";
 
 /** Only owned no-echo fixtures; assert delivery without storing the entered value. */
@@ -39,7 +40,14 @@ process.stdin.on("data", chunk => {
       };
       (window as any).dropTestSockets = () => { for (const socket of sockets) socket.close(); };
     }, pane);
-    await paneSendText(pane, `exec '${Bun.which("node")}' '${script}'\n`);
+    const node = Bun.which("node")!;
+    if (process.platform === "win32") {
+      // A Windows pane runs PowerShell: no `exec`, and a newline only breaks PowerShell's line, so Enter runs it.
+      await paneSendText(pane, shellCommandLine("powershell", node, [script]));
+      await paneSendKeys(pane, ["Enter"]);
+    } else {
+      await paneSendText(pane, `exec '${node}' '${script}'\n`);
+    }
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
     const errors: string[] = [];
