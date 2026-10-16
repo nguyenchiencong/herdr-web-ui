@@ -21,6 +21,9 @@ Production builds create Brotli (`.br`) and gzip (`.gz`) sidecars for JavaScript
 `Vary: Accept-Encoding`; a client that excludes every available representation gets 406.
 Older builds without sidecars retain identity responses. The shell and service worker keep
 their revalidation policy, and user files and API responses are never compressed by this path.
+The unit suite fails when the entry chunk's Brotli sidecar exceeds 320,000 bytes
+(`scripts/bundle-budget.test.ts`). `bun run check fast` builds before its unit tests, so the test
+reads that build; it skips when `dist/assets` is absent.
 
 `bun run check` runs what CI runs, from the same script (`scripts/check.ts`):
 

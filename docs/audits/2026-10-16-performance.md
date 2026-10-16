@@ -548,14 +548,14 @@ The findings above are kept as recorded. Status of each item after implementatio
 review round:
 
 - [x] P0-1: a long-lived PowerShell worker for the periodic pollers (`polledProcessTable`);
-  one-off callers keep the one-shot query; the OmO table read is skipped while a pane's process
-  key is unchanged. Measured: 37.7 % → 1.87 % of a core at a 5 s cadence. Not done: the output
-  trim, and the GJC key skip.
+  one-off callers keep the one-shot query; the OmO and GJC table reads are skipped while a pane's
+  process key is unchanged. Measured: 37.7 % → 1.87 % of a core at a 5 s cadence. Not done: the
+  output trim, and the GJC binding's final check, which still reads the table fresh.
 - [x] P0-2: amortized `ReplayBuffer` trim. 64 B chunk: 280 → 0.33 µs; 4 KiB: 309 → 18 µs.
 - [x] P1-1: `server/snapshot-cache.ts`, with a 1 s observer window and in-flight coalescing for
   conversation requests; invalidated on herdr frames and by any newer direct read. Client reads
-  stay fresh. Simulated: 18 → 6 reads per 30 s. Not done: the mirror size poll still reads every
-  2 s per viewer.
+  stay fresh. Simulated: 18 → 6 reads per 30 s. The mirror's size no longer costs a read
+  (`server/pane-size.ts`): one mirrored viewer went from 9–10 to 4 session reads per 20 s.
 - [x] P1-2: an async, stat-cached OmO task count; a turn end waits for a fresh read. 2048
   records: 165–189 ms blocking → under 1 ms.
 - [x] P1-3: `machines.json` is written and the roster pushed only on change, with a full roster
@@ -570,4 +570,9 @@ review round:
   is flushed when the page is hidden.
 - [ ] P2-3, P2-4, P2-5, P2-9: skipped (deliberate latency trade-off, risk to session binding,
   size/CPU trade-off, no observed leak).
-- [ ] P2-7, P2-10: skipped; both need browser QA (Mermaid with KaTeX 0.18, drag preview).
+- [ ] P2-7: not done. Overriding Mermaid's `katex` to 0.18.9 leaves one 259,111-byte KaTeX module,
+  but Vite also emits a 64-byte re-export chunk, so `math-browser-qa.ts` fails its one-request
+  assertion (actual 2). Reverted; `math-browser-qa.ts` passes on the reverted tree.
+- [ ] P2-10: skipped. No drag browser script runs on this Windows host: `ui-regression.ts` fails at
+  line 180 (the sidebar shows `pwsh.exe`), and `ui-contexts-regression.ts` (which runs
+  `checkSplitView`) cannot start its herdr session.
