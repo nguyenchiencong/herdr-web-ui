@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerMessage } from "../shared/protocol.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
 import { createServer, type ServerInstance } from "./index.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 async function until(predicate: () => boolean, label: string, ms = 10_000): Promise<void> {
   const deadline = Date.now() + ms;
@@ -102,7 +103,7 @@ describe("WebSocket read-only live watch", () => {
     } finally {
       bridge?.stop();
       if (workspaceId) await herdrRpc("workspace.close", { workspace_id: workspaceId }).catch(() => undefined);
-      rmSync(stateDir, { recursive: true, force: true });
+      await removeTempDir(stateDir);
     }
   });
 

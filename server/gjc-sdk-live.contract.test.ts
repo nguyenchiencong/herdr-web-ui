@@ -1,13 +1,14 @@
 import { expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { constants } from "node:fs";
-import { accessSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { accessSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ConversationUnavailable, forgetTranscriptState, gjcTranscriptPath, transcriptPage } from "./conversation.ts";
 import { herdrRpc, herdrSocketPath, paneRead, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import { isGjcProcess } from "./gjc-runtime.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 const TEST_BIN = process.env["HERDR_GJC_SDK_TEST_BIN"];
 const SUPPORTED_PLATFORM = process.platform === "linux";
@@ -444,7 +445,7 @@ it.skipIf(!TEST_BIN || !SUPPORTED_PLATFORM)(
         }
       }
       forgetTranscriptState();
-      if (root !== null && isolatedChildrenGone) rmSync(root, { recursive: true, force: true });
+      if (root !== null && isolatedChildrenGone) await removeTempDir(root);
       if (cleanupErrors.length > 0) {
         const message = `GJC SDK live-test cleanup failed: ${cleanupErrors.join("; ")}`;
         // the test's own failure is the one to report; a cleanup failure beside it is only logged

@@ -9,6 +9,7 @@ import { startFakePushService } from "./push.fake.ts";
 import { createServer } from "./index.ts";
 import { workspaceCreate, workspaceClose } from "./herdr/client.ts";
 import type { ServerMessage } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 const guard = { "x-herdr-machine": "1", "content-type": "application/json" };
 
@@ -80,7 +81,7 @@ it("revocation closes an active device's terminal and roster stream without disc
     for (const socket of sockets) socket.close();
     server.stop();
     if (workspaceId) await workspaceClose(workspaceId);
-    rmSync(root, { recursive: true, force: true });
+    await removeTempDir(root);
   }
 }, 10_000);
 

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,7 @@ import { createServer } from "./index.ts";
 import { forgetTranscriptState } from "./conversation.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationPart, ConversationResponse } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 // Real herdr metadata + HTTP + an OpenCode store of the test's own, handed to the server (opencodeDb).
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-opencode-contract-"));
@@ -89,7 +90,7 @@ afterAll(async () => {
   for (const workspaceId of workspaces) await workspaceClose(workspaceId);
   db?.close();
   forgetTranscriptState();
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 const url = (path: string, params: Record<string, string>, targetPaneId = paneId) =>

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./he
 import type { ConversationPart, ConversationResponse } from "../shared/protocol.ts";
 import { forgetTranscriptState } from "./conversation.ts";
 import { hermesTerminalId, isHermesProcess, processHermesHome } from "./hermes.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 interface RunningServer {
   port: number;
@@ -79,7 +80,7 @@ afterAll(async () => {
   if (originalHermesHome === undefined) delete process.env["HERMES_HOME"];
   else process.env["HERMES_HOME"] = originalHermesHome;
   if (workspaceId) await workspaceClose(workspaceId);
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 /** Reads the owned pane through the authenticated conversation route. */

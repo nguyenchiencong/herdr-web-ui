@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { paneRead, paneSendKeys, paneSendText, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ApiError, PaneLayoutSnapshot, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, SessionSnapshot } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 /**
  * Contract test for the pane layout routes: /api/pane/split, zoom, swap, resize and clear, the
@@ -28,7 +29,7 @@ beforeAll(async () => {
 afterAll(async () => {
   server?.stop();
   if (workspaceId) await workspaceClose(workspaceId).catch(() => undefined);
-  rmSync(stateDir, { recursive: true, force: true });
+  await removeTempDir(stateDir);
 });
 
 const base = () => `http://localhost:${server.port}`;

@@ -1,10 +1,11 @@
 import { expect, it, spyOn } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as herdr from "./herdr/client.ts";
 import { createServer } from "./index.ts";
 import { PtySession } from "./pty/session.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 /** A left click as xterm reports it with herdr's SGR mouse mode on: press, then release. */
 const CLICK = "\x1b[<0;5;3M\x1b[<0;5;3m";
@@ -117,7 +118,7 @@ async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "r
     textSpy.mockRestore();
     writeSpy.mockRestore();
     if (workspace) await herdr.workspaceClose(workspace).catch(() => undefined);
-    rmSync(root, { recursive: true, force: true });
+    await removeTempDir(root);
   }
 }
 
@@ -184,7 +185,7 @@ it("cancels a pending attach continuation when detach and reattach installs a ne
     server.stop();
     spy.mockRestore();
     if (workspace) await herdr.workspaceClose(workspace).catch(() => undefined);
-    rmSync(root, { recursive: true, force: true });
+    await removeTempDir(root);
   }
 }, 20_000);
 
@@ -246,6 +247,6 @@ it("refuses a chord sent while its attach is still being looked up, instead of s
     snapshotSpy.mockRestore();
     keysSpy.mockRestore();
     if (workspace) await herdr.workspaceClose(workspace).catch(() => undefined);
-    rmSync(root, { recursive: true, force: true });
+    await removeTempDir(root);
   }
 }, 20_000);

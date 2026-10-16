@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 // Real herdr metadata + HTTP + native files, all under an owned workspace/store.
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-contract-"));
@@ -40,7 +41,7 @@ beforeAll(async () => {
 afterAll(async () => {
   server?.stop();
   if (workspaceId) await workspaceClose(workspaceId);
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 const read = async (): Promise<ConversationResponse> => {

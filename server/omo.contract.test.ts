@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
@@ -9,6 +9,7 @@ import { createServer } from "./index.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
 import { startShellAgent } from "./shell-agent.ts";
 import { processStartedAt } from "./process-start.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-omo-binding-"));
 const workspaces: string[] = [];
@@ -18,7 +19,7 @@ const dir = join(root, ".omo", "agent", "sessions", `-${root.replaceAll("/", "-"
 mkdirSync(dir, { recursive: true });
 afterAll(async () => {
   for (const id of workspaces) await workspaceClose(id);
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 async function waitForProcess(paneId: string, marker: string) {
@@ -224,7 +225,7 @@ it.skipIf(process.platform !== "linux")("ignores the background task logs omo ho
     expect(await omoTranscriptForPane(paneId, cwd, (await sessionSnapshot()).panes, cwd)).toBe(realpathSync(path));
   } finally {
     await workspaceClose(created.workspace.workspace_id);
-    rmSync(cwd, { recursive: true, force: true });
+    await removeTempDir(cwd);
   }
 });
 

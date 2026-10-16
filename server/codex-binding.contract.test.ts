@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc, paneRead, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 // Real herdr panes running a stand-in `codex` process: which rollout the chat reads
 // while nothing Codex said is on screen.
@@ -136,7 +137,7 @@ beforeAll(() => {
 afterAll(async () => {
   server?.stop();
   for (const id of workspaces) await workspaceClose(id);
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 it("reads a literal short first answer through the conversation endpoint (regression)", async () => {

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
@@ -7,6 +7,7 @@ import { herdrRpc, paneSendText, paneSendKeys } from "./herdr/client.ts";
 import { OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_STALL_MS } from "./output-window.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-output-contract-"));
 const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root });
@@ -16,7 +17,7 @@ afterAll(async () => {
   for (const socket of sockets) socket.close();
   server.stop();
   for (const workspace of workspaces) await herdrRpc("workspace.close", { workspace_id: workspace });
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 async function until(check: () => boolean, label: string, timeout = 10_000): Promise<void> {

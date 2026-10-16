@@ -1,12 +1,13 @@
 import { expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Socket } from "bun";
 import { PtySession } from "./pty/session.ts";
 import { createServer } from "./index.ts";
 import { herdrRpc, herdrSocketPath, paneRead, paneSendText, workspaceClose, workspaceCreate } from "./herdr/client.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 interface ProxiedRequest { method: string; params: unknown; answered: boolean }
 interface Leg { up: Socket<undefined> | null; held: Buffer[]; entry: ProxiedRequest | null }
@@ -172,7 +173,7 @@ async function mirroredSecret(refuse: boolean, screens?: { visible: string; dete
     process.env["HERDR_SOCKET"] = herdr;
     if (workspace) await workspaceClose(workspace, herdr);
     proxy.stop();
-    rmSync(root, { recursive: true, force: true });
+    await removeTempDir(root);
   }
 }
 
@@ -294,6 +295,6 @@ it("secret frames validate prompts and authority, never queue, and type one no-e
   } finally {
     socket?.close(); server.stop();
     if (workspace) await workspaceClose(workspace);
-    rmSync(root, { recursive: true, force: true });
+    await removeTempDir(root);
   }
 }, 15_000);

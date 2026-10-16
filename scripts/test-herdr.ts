@@ -10,7 +10,7 @@
  * HERDR_TEST_MODE=unit points HERDR_SOCKET at a socket that does not exist, so a test that
  * reaches for herdr in a unit run fails instead of working in the user's herdr.
  */
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ping, sessionSnapshot, workspaceCreate } from "../server/herdr/client.ts";
@@ -63,7 +63,7 @@ export async function useTestHerdr(): Promise<string | null> {
   // a server left running from before that directory existed has panes reading those files:
   // it is stopped once, and started again below
   if (!existsSync(zdotdir) && await answers(socket)) {
-    Bun.spawnSync([herdr, "--session", TEST_SESSION, "server", "stop"]);
+    Bun.spawnSync([herdr, "--session", TEST_SESSION, "server", "stop"], { windowsHide: true });
     for (const deadline = Date.now() + 15_000; await answers(socket);) {
       if (Date.now() > deadline) throw new Error(`The test herdr session "${TEST_SESSION}" did not stop`);
       await Bun.sleep(100);
@@ -78,6 +78,7 @@ export async function useTestHerdr(): Promise<string | null> {
   if (!(await answers(socket))) {
     Bun.spawn([herdr, "--session", TEST_SESSION, "server"], {
       stdin: "ignore",
+      windowsHide: true,
       stdout: Bun.file(join(dirname(socket), "test-server.log")),
       stderr: Bun.file(join(dirname(socket), "test-server.log")),
       // run from inside a herdr pane, this process carries that pane's HERDR_* variables; run by
@@ -98,6 +99,26 @@ export async function useTestHerdr(): Promise<string | null> {
   }
   process.env["HERDR_SOCKET"] = socket;
   return socket;
+}
+
+/**
+ * Removes a directory a test made, once herdr lets go of it. herdr answers a workspace's close before the
+ * pane's process (pwsh.exe on Windows) has exited, so the removal can fail with EBUSY, EPERM or ENOTEMPTY for
+ * a moment. Those are retried, polling for up to 10 s; any other error, or a directory still held after that,
+ * throws.
+ */
+export async function removeTempDir(dir: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (!(code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY") || Date.now() > deadline) throw error;
+    }
+    await Bun.sleep(100);
+  }
 }
 
 await useTestHerdr();

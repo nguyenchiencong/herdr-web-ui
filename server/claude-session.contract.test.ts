@@ -8,6 +8,7 @@ import { claudeProjectDir } from "./claude-store.ts";
 import { startFakePushService } from "./push.fake.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse, HerdrPane, OmoActivity, PanePlan, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 // Real foreground processes and native PID records, without hooks or a model request.
 const root = mkdtempSync(join(tmpdir(), "herdr-claude-session-"));
@@ -156,7 +157,7 @@ afterAll(async () => {
   if (originalHome === undefined) delete process.env["HOME"];
   else process.env["HOME"] = originalHome;
   for (const workspace of workspaces) await workspaceClose(workspace);
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 /** Polls `check` for up to 10 s, then asserts it: the server answers what it knows now, and knows more later. */

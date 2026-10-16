@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApiError, PaneFindResponse } from "../shared/protocol.ts";
 import { createServer } from "./index.ts";
 import { HerdrError, herdrRpc, herdrSocketPath, paneRead, paneScroll, paneScrollInfo, workspaceClose, workspaceCreate } from "./herdr/client.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 describe("POST /api/pane/find", () => {
   let server: ReturnType<typeof createServer>;
@@ -38,7 +39,7 @@ describe("POST /api/pane/find", () => {
   afterAll(async () => {
     server?.stop();
     if (workspaceId) await workspaceClose(workspaceId);
-    if (stateDir) rmSync(stateDir, { recursive: true, force: true });
+    if (stateDir) await removeTempDir(stateDir);
   });
 
   it("finds history above the viewport and scrolls to its native match", async () => {

@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerMessage } from "../shared/protocol.ts";
 import { startStatusCollector } from "./collector.ts";
 import { createServer } from "./index.ts";
 import { herdrRpc, sessionSnapshot, subscribeEvents, workspaceClose, workspaceCreate } from "./herdr/client.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 describe("socket lifecycle changes reach WebSocket clients", () => {
   let app: ReturnType<typeof createServer>;
@@ -47,7 +48,7 @@ describe("socket lifecycle changes reach WebSocket clients", () => {
     app?.stop();
     if (movedWorkspace) await workspaceClose(movedWorkspace);
     if (workspace) await workspaceClose(workspace.workspace.workspace_id);
-    rmSync(stateDir, { recursive: true, force: true });
+    await removeTempDir(stateDir);
   });
 
   for (const method of ["workspace.rename", "tab.rename", "pane.zoom"]) {
@@ -167,7 +168,7 @@ describe("completion replay across a moved subscription key", () => {
       finished.resolve();
       collector.stop();
       await workspaceClose(workspaceId);
-      rmSync(root, { recursive: true, force: true });
+      await removeTempDir(root);
     }
   });
 });

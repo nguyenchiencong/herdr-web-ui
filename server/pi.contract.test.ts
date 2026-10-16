@@ -7,6 +7,7 @@ import { createServer } from "./index.ts";
 import { forgetPiModels } from "./pi-models.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 // Real herdr metadata + HTTP + native files, all under an owned workspace/store.
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-pi-contract-"));
@@ -71,7 +72,7 @@ afterAll(async () => {
   server?.stop();
   for (const workspaceId of workspaces) await workspaceClose(workspaceId);
   delete process.env["PI_CODING_AGENT_SESSION_DIR"];
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 const read = async (target = paneId): Promise<ConversationResponse> => {

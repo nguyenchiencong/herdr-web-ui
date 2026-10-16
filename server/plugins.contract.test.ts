@@ -7,6 +7,7 @@ import { herdrRpc, herdrSocketPath, pluginLogList, sessionSnapshot, workspaceClo
 import { disposableConfig } from "../scripts/disposable-config.ts";
 import { MACHINE_PROXY_PATH } from "./machine-api.ts";
 import type { ApiError, PluginActionResult, PluginActionsResponse } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 /**
  * GET /api/plugins/actions and POST /api/plugin/action against a real herdr, with a plugin linked
@@ -109,9 +110,9 @@ platforms = ["linux", "macos"]
     impatient?.stop();
     if (created) await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
     await herdrRpc("plugin.unlink", { plugin_id: PLUGIN }).catch(() => undefined);
-    rmSync(root, { recursive: true, force: true });
-    rmSync(stateDir, { recursive: true, force: true });
-    rmSync(impatientStateDir, { recursive: true, force: true });
+    await removeTempDir(root);
+    await removeTempDir(stateDir);
+    await removeTempDir(impatientStateDir);
   });
 
   it("lists each plugin with its enabled state and the actions this platform can run, without their command lines", async () => {
@@ -195,7 +196,7 @@ platforms = ["linux", "macos"]
     } finally {
       if (elsewhere) await herdrRpc("worktree.remove", { workspace_id: elsewhere.workspace.workspace_id, force: true }, undefined, 60_000).catch(() => undefined);
       await workspaceClose(source.workspace.workspace_id).catch(() => undefined);
-      rmSync(scratch, { recursive: true, force: true });
+      await removeTempDir(scratch);
     }
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Machine } from "../shared/machines.ts";
@@ -8,6 +8,7 @@ import { CompletionTracker } from "./completion.ts";
 import { sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import { MachineManager } from "./machines.ts";
 import { createPushService } from "./push.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 describe("slow structural roster refreshes", () => {
   for (const remote of [false, true]) {
@@ -103,7 +104,7 @@ describe("slow structural roster refreshes", () => {
         if (pending) pending.resolve(pending.snapshot);
         bridge?.stop(true);
         await workspaceClose(workspace.workspace.workspace_id);
-        rmSync(root, { recursive: true, force: true });
+        await removeTempDir(root);
       }
     });
   }

@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { paneSplit, sessionSnapshot, tabCreate, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ApiError, PaneLayoutSnapshot, PaneSwapped } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 describe("pane canvas: focus, explicit swap and dragged split ratio", () => {
   const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-canvas-contract-"));
@@ -46,7 +47,7 @@ describe("pane canvas: focus, explicit swap and dragged split ratio", () => {
   afterAll(async () => {
     server?.stop();
     if (workspaceId) await workspaceClose(workspaceId).catch(() => undefined);
-    rmSync(state, { recursive: true, force: true });
+    await removeTempDir(state);
   });
 
   it("focuses exactly the requested pane, workspace and tab and follows it while zoomed", async () => {

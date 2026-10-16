@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 /**
  * Answers to Claude's unnumbered menus (the folder-trust check among them), against the real
@@ -126,7 +127,7 @@ beforeAll(async () => {
 afterAll(async () => {
   server?.stop();
   for (const id of workspaces) await herdrRpc("workspace.close", { workspace_id: id }).catch(() => undefined);
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 describe("answers to Claude's unnumbered menus", () => {

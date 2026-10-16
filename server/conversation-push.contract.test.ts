@@ -7,6 +7,7 @@ import { ConversationMonitor } from "./conversation-monitor.ts";
 import { forgetTranscriptState } from "./conversation.ts";
 import { createServer } from "./index.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 type TestBridge = { port: number; stop: () => void };
 type ConversationChanged = Extract<ServerMessage, { type: "conversation-changed" }>;
@@ -143,8 +144,8 @@ describe("native conversation invalidation", () => {
     else process.env["HOME"] = originalHome;
     if (workspaceId) await workspaceClose(workspaceId);
     forgetTranscriptState();
-    rmSync(root, { recursive: true, force: true });
-    rmSync(store, { recursive: true, force: true });
+    await removeTempDir(root);
+    await removeTempDir(store);
   });
 
   it("does not monitor terminal-only attachments and releases disabled interest without detaching", async () => {

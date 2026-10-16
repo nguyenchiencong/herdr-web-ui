@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
@@ -10,6 +10,7 @@ import type { PendingMessage, ServerMessage } from "../shared/protocol.ts";
 import * as processStart from "./process-start.ts";
 import * as pendingInput from "./pending-input.ts";
 import { OmoStatus } from "./omo-status.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 type PendingUpdate = Extract<ServerMessage, { type: "pending-messages" }>;
 
@@ -94,7 +95,9 @@ beforeAll(() => {
 afterEach(async () => {
   for (const item of active.splice(0)) { for (const socket of item.sockets) socket.close(); item.stop(); await herdrRpc("workspace.close", { workspace_id: item.workspace }).catch(() => undefined); }
 });
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+afterAll(async () => {
+  await removeTempDir(root);
+});
 
 async function setup(label: string, agent = "claude", screen = "› Message\n", options: Parameters<typeof createServer>[0] = {}, replaceable = false) {
   const id = ++next;

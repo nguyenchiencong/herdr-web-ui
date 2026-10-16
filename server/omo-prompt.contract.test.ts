@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 /**
  * Answers to omo's form of several questions, against the real herdr server. The pane runs a
@@ -106,7 +107,7 @@ beforeAll(async () => {
 afterAll(async () => {
   server?.stop();
   if (workspace) await herdrRpc("workspace.close", { workspace_id: workspace }).catch(() => undefined);
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 describe("answers to omo's form of several questions", () => {

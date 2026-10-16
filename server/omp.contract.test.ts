@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createServer } from "./index.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 // omp names its session file when it starts and writes it with the first message (seen on a
 // fresh omp pane: herdr held the path, the file was not there). A fake omp stands in.
@@ -45,7 +46,7 @@ afterAll(async () => {
   if (originalHome === undefined) delete process.env["HOME"];
   else process.env["HOME"] = originalHome;
   if (workspaceId) await workspaceClose(workspaceId);
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 const read = async (): Promise<ConversationResponse> => {

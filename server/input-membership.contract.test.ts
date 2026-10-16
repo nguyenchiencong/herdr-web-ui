@@ -1,11 +1,12 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createServer } from "./index.ts";
 import { herdrRpc, paneRead } from "./herdr/client.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 /**
  * RC2: the `input` frame's mirror/RPC branch — the one taken when this PC cannot attach a
@@ -29,7 +30,7 @@ afterAll(async () => {
   for (const socket of sockets) socket.close();
   server.stop();
   for (const workspace of workspaces) await herdrRpc("workspace.close", { workspace_id: workspace });
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 async function until(check: () => Promise<boolean>, label: string, timeout = 15_000): Promise<void> {

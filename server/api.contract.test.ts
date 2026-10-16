@@ -23,6 +23,7 @@ import type { MachineManager } from "./machines.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
 import { forgetTranscriptState } from "./conversation.ts";
 import type { RepoDiffFileList, RepoDiffFilePatch } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 /**
  * Contract test for herdr-web-ui's HTTP + WS surface.
@@ -117,7 +118,7 @@ describe("Grok conversation API", () => {
       expect(await (await fetch(url)).json()).toEqual({ source: "scrollback", turns: [] });
     } finally {
       app?.stop(); await workspaceClose(created.workspace.workspace_id);
-      forgetTranscriptState(); rmSync(root, { recursive: true, force: true });
+      forgetTranscriptState(); await removeTempDir(root);
     }
   }, 20_000);
 });
@@ -196,7 +197,7 @@ describe("Agy conversation API", () => {
       expect(await (await fetch(url)).json()).toEqual({ source: "scrollback", turns: [] });
     } finally {
       monitor?.stop(); app?.stop(); db?.close(); await workspaceClose(created.workspace.workspace_id);
-      forgetTranscriptState(); rmSync(root, { recursive: true, force: true });
+      forgetTranscriptState(); await removeTempDir(root);
     }
   }, 20_000);
 });
@@ -253,7 +254,7 @@ describe("Devin conversation API", () => {
     } finally {
       bridge?.stop();
       await workspaceClose(created.workspace.workspace_id);
-      rmSync(state, { recursive: true, force: true });
+      await removeTempDir(state);
     }
   });
 });
@@ -871,7 +872,7 @@ describe("agent rename", () => {
     } finally {
       bridge.stop();
       await workspaceClose(owned.workspace.workspace_id);
-      rmSync(state, { recursive: true, force: true });
+      await removeTempDir(state);
     }
   });
 
@@ -952,7 +953,7 @@ describe("tab creation", () => {
       expect(last.tabs.find((t) => t.tab_id === thirdPane.tab_id)).toMatchObject({ label: "3", number: 3 });
     } finally {
       await workspaceClose(owned.workspace.workspace_id);
-      rmSync(cwd, { recursive: true, force: true });
+      await removeTempDir(cwd);
     }
   });
 
@@ -1003,7 +1004,7 @@ describe("tab creation", () => {
     } finally {
       bridge.stop();
       await workspaceClose(owned.workspace.workspace_id);
-      rmSync(state, { recursive: true, force: true });
+      await removeTempDir(state);
     }
   });
 
@@ -1051,7 +1052,7 @@ describe("tab creation", () => {
     } finally {
       process.env["PATH"] = path;
       await workspaceClose(owned.workspace.workspace_id);
-      rmSync(bin, { recursive: true, force: true });
+      await removeTempDir(bin);
     }
   });
 });
@@ -1207,8 +1208,8 @@ describe("workspace and discovery endpoints", () => {
       expect(existsSync(checkout)).toBeFalse();
     } finally {
       await herdrRpc("workspace.close", { workspace_id: parent.workspace.workspace_id }).catch(() => undefined);
-      rmSync(repo, { recursive: true, force: true });
-      rmSync(`${repo}-checkouts`, { recursive: true, force: true });
+      await removeTempDir(repo);
+      await removeTempDir(`${repo}-checkouts`);
     }
   }, 20_000);
 
@@ -1296,8 +1297,8 @@ describe("workspace and discovery endpoints", () => {
       }
       for (const id of children) await herdrRpc("worktree.remove", { workspace_id: id, force: true }).catch(() => undefined);
       for (const id of owned) await herdrRpc("workspace.close", { workspace_id: id }).catch(() => undefined);
-      rmSync(checkouts, { recursive: true, force: true });
-      rmSync(repo, { recursive: true, force: true });
+      await removeTempDir(checkouts);
+      await removeTempDir(repo);
     }
   }, 30_000);
 
@@ -1342,8 +1343,8 @@ describe("workspace and discovery endpoints", () => {
         if (workspace.worktree?.is_linked_worktree && workspace.worktree.repo_root === repoRoot) await herdrRpc("worktree.remove", { workspace_id: workspace.workspace_id, force: true }).catch(() => undefined);
       }
       for (const id of owned) await herdrRpc("workspace.close", { workspace_id: id }).catch(() => undefined);
-      rmSync(checkouts, { recursive: true, force: true });
-      rmSync(repo, { recursive: true, force: true });
+      await removeTempDir(checkouts);
+      await removeTempDir(repo);
     }
   }, 30_000);
 
@@ -1652,7 +1653,7 @@ describe("POST /api/pane/image", () => {
 
   afterAll(async () => {
     if (qaWorkspaceId) await herdrRpc("workspace.close", { workspace_id: qaWorkspaceId });
-    if (qaCwd) rmSync(qaCwd, { recursive: true, force: true });
+    if (qaCwd) await removeTempDir(qaCwd);
   });
 
   it("stores a pasted image under the pane cwd and returns its absolute path", async () => {
@@ -2683,7 +2684,7 @@ describe("web push", () => {
       bridge?.stop();
       device?.stop();
       if (created) await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
-      if (dir) rmSync(dir, { recursive: true, force: true });
+      if (dir) await removeTempDir(dir);
     }
   }, 60_000);
 
@@ -3026,7 +3027,7 @@ describe("pairing and identity", () => {
     try {
       // spawned asynchronously: a synchronous spawn would block the very server the script asks
       const pairCli = async (port: number) => {
-        const child = Bun.spawn(["bun", "scripts/plugin.ts", "pair"], { cwd: join(import.meta.dir, ".."), env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", HERDR_PLUGIN_CONFIG_DIR: configDir, HERDR_WEB_TOKEN: "" }, stdout: "pipe", stderr: "pipe" });
+        const child = Bun.spawn(["bun", "scripts/plugin.ts", "pair"], { cwd: join(import.meta.dir, ".."), env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", HERDR_PLUGIN_CONFIG_DIR: configDir, HERDR_WEB_TOKEN: "" }, stdout: "pipe", stderr: "pipe", windowsHide: true });
         const [out, err, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
         return { out, err, exitCode };
       };
@@ -3388,7 +3389,7 @@ it("refuses cross-origin changes while allowing same-origin and CLI requests", a
       const response = await fetch(`${base}/api/pane/rename`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ pane_id: created.root_pane.pane_id, label: "allowed rename" }) });
       expect(response.status).toBe(200);
     }
-  } finally { instance.stop(); await workspaceClose(created.workspace.workspace_id); rmSync(root, { recursive: true, force: true }); }
+  } finally { instance.stop(); await workspaceClose(created.workspace.workspace_id); await removeTempDir(root); }
 });
 
 describe("repository diff of a pane's folder", () => {
@@ -3396,7 +3397,7 @@ describe("repository diff of a pane's folder", () => {
   let workspaceId: string | null = null;
   afterAll(async () => {
     if (workspaceId) await workspaceClose(workspaceId).catch(() => undefined);
-    rmSync(root, { recursive: true, force: true });
+    await removeTempDir(root);
   });
 
   it("reads the repository the pane sits in, a folder named from it, and a named folder once the pane is gone", async () => {

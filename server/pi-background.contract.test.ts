@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
@@ -7,6 +7,7 @@ import { createServer } from "./index.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import { piBackgroundLogDir } from "./pi-subagents.ts";
 import type { BackgroundOutput, OmoActivity } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 // A pi pane's background command is listed, and its output read, only through the log its own transcript
 // names, and only when that log lies in pi's background-job folder. A path a request names is never read.
@@ -67,7 +68,7 @@ afterAll(async () => {
   server?.stop();
   for (const workspaceId of workspaces) await workspaceClose(workspaceId);
   delete process.env["PI_CODING_AGENT_SESSION_DIR"];
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 describe("the background-output endpoint's own checks", () => {

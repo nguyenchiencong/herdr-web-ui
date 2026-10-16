@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createServer, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import * as herdr from "./herdr/client.ts";
 import { PtySession } from "./pty/session.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 /**
  * Contract test for the composer's "submit" frame, against the real herdr server.
@@ -175,7 +176,7 @@ beforeAll(async () => {
 afterAll(async () => {
   server?.stop();
   for (const id of workspaces) await herdrRpc("workspace.close", { workspace_id: id }).catch(() => undefined);
-  rmSync(root, { recursive: true, force: true });
+  await removeTempDir(root);
 });
 
 describe("WebSocket submit", () => {

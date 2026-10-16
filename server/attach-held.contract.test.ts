@@ -1,10 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 /**
  * Two web bridges on one herdr (a second install beside the first): herdr gives one of them
@@ -25,8 +26,8 @@ afterAll(async () => {
   second.stop();
   third.stop();
   for (const workspace of workspaces) await herdrRpc("workspace.close", { workspace_id: workspace });
-  rmSync(rootA, { recursive: true, force: true });
-  rmSync(rootB, { recursive: true, force: true });
+  await removeTempDir(rootA);
+  await removeTempDir(rootB);
 });
 
 async function until(check: () => boolean, label: string, timeout = 15_000): Promise<void> {

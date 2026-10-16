@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
 import { PtySession } from "./pty/session.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
+import { removeTempDir } from "../scripts/test-herdr.ts";
 
 const realHerdr = process.env.HERDR_WEB_HERDR_BIN || Bun.which("herdr")!;
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -56,7 +57,7 @@ async function fixture(steps: Step[], attachHoldMs?: number) {
     for (const [key, value] of [["HERDR_WEB_HERDR_BIN", previous.binary], ["HERDR_ATTACH_TEST_DIR", previous.dir]]) {
       if (value === undefined) delete process.env[key!]; else process.env[key!] = value;
     }
-    rmSync(root, { recursive: true, force: true });
+    await removeTempDir(root);
   });
   await until(() => ws.readyState === WebSocket.OPEN, "socket open");
   const send = (message: ClientMessage) => ws.send(JSON.stringify(message));
