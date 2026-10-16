@@ -213,6 +213,22 @@ it("adopts the pane's new size, says so first, and paints the unchanged screen a
   session.kill();
 });
 
+it("asks the size at each read, so a resize is shown at the read after it, not on a timer", async () => {
+  let size = { cols: 80, rows: 24 };
+  let asks = 0;
+  const resized: string[] = [];
+  const { session, read, frames } = pane({ size: async () => { asks += 1; return size; }, onResize: (cols, rows) => resized.push(`${cols}x${rows}`) });
+  (await read(1)).resolve("one");
+  (await read(2)).resolve("one");
+  size = { cols: 100, rows: 30 };
+  (await read(3)).resolve("one");
+  await read(4);
+  expect(asks).toBe(4);
+  expect(resized).toEqual(["100x30"]);
+  expect(frames).toEqual([mirrorFrame("one"), mirrorFrame("one")]);
+  session.kill();
+});
+
 it("keeps the latest screen whole for a client joining late", async () => {
   const { session, read } = pane({ rows: 700 });
   expect(session.current).toBeNull();

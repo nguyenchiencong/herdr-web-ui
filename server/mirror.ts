@@ -25,8 +25,8 @@ export const MIRROR_ECHO_MS = 15;
 export const MIRROR_WHOLE_MS = 10_000;
 /** how long the screen must stay unchanged, after rows were sent, before it goes out whole once more */
 export const MIRROR_QUIET_MS = 1000;
-/** how often the pane's size is asked for: herdr announces no layout change this server listens to */
-export const MIRROR_SIZE_MS = 2000;
+/** how often the pane's size is asked for: at every read, since it is answered from memory (pane-size.ts) and costs herdr nothing */
+export const MIRROR_SIZE_MS = 0;
 /** reads in a row that herdr did not answer before the mirror ends as a terminal would */
 const MIRROR_FAILURES = 10;
 

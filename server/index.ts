@@ -100,6 +100,7 @@ import { PaneWatch } from "./watch.ts";
 import { AttachOutputTail, isTakeoverExit } from "./attach-output.ts";
 import { attachableIdentity, sidecarAvailable } from "./pty/sidecar.ts";
 import { MirrorSession } from "./mirror.ts";
+import { createPaneSizes } from "./pane-size.ts";
 import { mirrorInput } from "./mirror-input.ts";
 import { PendingInputs, PendingInputError, samePendingIdentity, type PendingIdentity, type PendingRecord } from "./pending-input.ts";
 import { processStartedAt } from "./process-start.ts";
@@ -1214,9 +1215,11 @@ export function createServer(
     for (const client of clients) send(client, message);
   }
 
-  // `observed` is the mirror's size check, which may take the shared read; an attach reads herdr directly
-  async function terminalInfoFor(paneId: string, timeoutMs?: number, observed = false): Promise<{ terminalId: string; rect: { width: number; height: number } | null }> {
-    const snapshot = observed ? await observedSessionSnapshot(timeoutMs) : await sessionSnapshot(undefined, timeoutMs);
+  /** each pane's grid from the collector's layouts: a mirror checks its size here, not with a read of herdr (pane-size.ts) */
+  const paneSizes = createPaneSizes();
+
+  async function terminalInfoFor(paneId: string, timeoutMs?: number): Promise<{ terminalId: string; rect: { width: number; height: number } | null }> {
+    const snapshot = await sessionSnapshot(undefined, timeoutMs);
     const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
     if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
     // herdr (0.9.3+) could not restore it after a restart: its terminal has no process
@@ -1323,10 +1326,7 @@ export function createServer(
       const mirror = new MirrorSession({
         cols: spawnCols,
         rows: spawnRows,
-        size: async () => {
-          const now = (await terminalInfoFor(paneId, undefined, true)).rect;
-          return now ? { cols: now.width, rows: now.height } : null;
-        },
+        size: async () => paneSizes.sizeOf(paneId),
         // the grid follows herdr's layout: the clients adopt the new size before the screen
         onResize: (cols, rows) => {
           if (attachments.get(paneId) !== attachment) return;
@@ -1788,6 +1788,7 @@ export function createServer(
       broadcastAll(paneStatus(paneId, "idle"));
       push.onStatus(paneId, alertStatus("idle", waits.waiting(paneId))).catch(logPushError);
     },
+    onLayouts: (layouts) => paneSizes.learn(layouts),
     onBaseline: (panes) => {
       // A resting baseline never reholds old work after a bridge restart.
       for (const pane of panes) if (pane.agent === "claude") waits.seed(pane.pane_id, pane.agent_status);

@@ -86,6 +86,23 @@ export function paneTableHeld(paneId: string, now = Date.now()): boolean {
   return seen !== undefined && now - seen.at < PANE_TABLE_MAX_MS;
 }
 
+type PaneProcessInfo = { process_info?: { shell_pid?: unknown; foreground_processes?: readonly { pid?: unknown }[] } } | null;
+
+/** A pane's process key: its shell and its foreground pids. paneProcessRows reads the Windows table again when it changes. */
+export function paneProcessKey(info: PaneProcessInfo): string {
+  const shell = info?.process_info?.shell_pid ?? "";
+  const foreground = (info?.process_info?.foreground_processes ?? []).map((entry) => Number(entry.pid)).sort((a, b) => a - b);
+  return `${shell}|${foreground.join(",")}`;
+}
+
+/**
+ * The Windows process table a GJC pane's discovery reads: the pane's own table while its process key is
+ * unchanged (paneProcessRows), else the shared recent read. A binding's final check does not use it: that read is fresh.
+ */
+export function gjcPaneRows(paneId: string, info: PaneProcessInfo, read: () => Promise<ProcessRow[]> = polledProcessTable, now = Date.now()): Promise<ProcessRow[]> {
+  return paneProcessRows(paneId, paneProcessKey(info), () => recentProcessEntry(read, now), now);
+}
+
 /** A gjc process by its number and when it started: a number alone comes back for another process. */
 export type GjcProcess = { pid: number; started: number | null };
 
@@ -120,7 +137,7 @@ export async function gjcPidUnderShell(
 }
 
 /** Forget the process table kept between Windows polls. */
-export function forgetGjcState(): void { processTable = null; transcriptFlights.clear(); }
+export function forgetGjcState(): void { processTable = null; paneTables.clear(); transcriptFlights.clear(); }
 
 /**
  * Where `file` sits inside `root`, as path segments, or null when it is not inside. The
@@ -363,7 +380,7 @@ async function lookupGjcTranscript(
   const processes = async (info: GjcPaneProcessInfo | null, fresh: boolean): Promise<GjcProcessIdentity[] | null> => {
     if (!info?.process_info) return null;
     if (platform === "win32") {
-      const table = fresh ? readProcessTable : () => recentProcessTable(readProcessTable);
+      const table = fresh ? readProcessTable : () => gjcPaneRows(paneId, info, readProcessTable);
       const process = await gjcPidUnderShell(info.process_info.shell_pid, platform, table);
       if (process === undefined) return null;
       if (process === null) return [];

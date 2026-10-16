@@ -2,7 +2,7 @@ import { constants, fstatSync, closeSync, openSync, readdirSync, readFileSync, r
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { HerdrPane } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
-import { paneProcessRows, paneTableHeld, recentProcessEntry } from "./gjc-runtime.ts";
+import { paneProcessKey, paneProcessRows, paneTableHeld, recentProcessEntry } from "./gjc-runtime.ts";
 import { processStartedAt } from "./process-start.ts";
 import { descendantProcesses, type ProcessRow } from "./windows-processes.ts";
 
@@ -331,13 +331,6 @@ export function withOmoDescendants(info: ProcessInfo, rows: readonly ProcessRow[
   const omo = descendantProcesses(rows, shell).filter((entry) =>
     isOmoProcess(entry.argv) && !foreground.some((existing) => existing.pid === entry.pid));
   return omo.length === 0 ? info : { ...info, process_info: { ...info?.process_info, foreground_processes: [...foreground, ...omo] } };
-}
-
-/** A pane's process key: its shell and its foreground pids. paneProcessRows reads the Windows table again when it changes. */
-export function paneProcessKey(info: ProcessInfo): string {
-  const shell = info?.process_info?.shell_pid ?? "";
-  const foreground = (info?.process_info?.foreground_processes ?? []).map((entry) => entry.pid).sort((a, b) => a - b);
-  return `${shell}|${foreground.join(",")}`;
 }
 
 const processInfo = async (paneId: string): Promise<ProcessInfo> => {

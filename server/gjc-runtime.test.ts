@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, 
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { forgetTranscriptState } from "./conversation.ts";
-import { gjcPidUnderShell, gjcSessionFile, gjcTranscriptForPane, isGjcProcess, paneProcessRows, parseGjcPs, recentProcessTable, storeRelative, terminalBreadcrumb, validateGjcSdkTranscript } from "./gjc-runtime.ts";
+import { forgetGjcState, gjcPaneRows, gjcPidUnderShell, gjcSessionFile, gjcTranscriptForPane, isGjcProcess, PANE_TABLE_MAX_MS, paneProcessRows, parseGjcPs, recentProcessTable, storeRelative, terminalBreadcrumb, validateGjcSdkTranscript } from "./gjc-runtime.ts";
 
 // Session paths come back canonical and the store root is passed in canonical; macOS's tmpdir is a symlink into /private.
 const tempDir = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -405,4 +405,25 @@ it("asks the Windows process table once for the polls of a few seconds", async (
   await recentProcessTable(unreadable, 20_000);
   await recentProcessTable(unreadable, 20_001);
   expect(failed).toBe(2);
+});
+
+it("reads a GJC pane's table again only when its process key changes or after PANE_TABLE_MAX_MS", async () => {
+  forgetGjcState();
+  let reads = 0;
+  const rows = [
+    { pid: 100, parent: 1, path: null, commandLine: "pwsh.exe" },
+    { pid: 200, parent: 100, path: "C:\\tools\\gjc.exe", commandLine: "C:\\tools\\gjc.exe --session abc", started: 7 },
+  ];
+  const read = async () => { reads += 1; return rows; };
+  type Info = { process_info: { shell_pid: number; foreground_processes: { pid: number }[] } };
+  const idle: Info = { process_info: { shell_pid: 100, foreground_processes: [] } };
+  const busy: Info = { process_info: { shell_pid: 100, foreground_processes: [{ pid: 300 }] } };
+  const under = (info: Info, now: number) => gjcPidUnderShell(100, "win32", () => gjcPaneRows("pane-gjc-keyed", info, read, now));
+  expect(await under(idle, 0)).toEqual({ pid: 200, started: 7 });
+  expect(await under(idle, PANE_TABLE_MAX_MS / 2)).toEqual({ pid: 200, started: 7 });
+  expect(reads).toBe(1);
+  expect(await under(busy, PANE_TABLE_MAX_MS / 2 + 1_000)).toEqual({ pid: 200, started: 7 });
+  expect(reads).toBe(2);
+  expect(await under(busy, PANE_TABLE_MAX_MS / 2 + 1_000 + PANE_TABLE_MAX_MS)).toEqual({ pid: 200, started: 7 });
+  expect(reads).toBe(3);
 });

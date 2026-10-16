@@ -1,4 +1,4 @@
-import type { AgentStatus, HerdrPane } from "../shared/protocol.ts";
+import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { HerdrError, sessionSnapshot, subscribeEvents, type EventFrame, type Subscription } from "./herdr/client.ts";
 
 /**
@@ -72,6 +72,8 @@ export interface StatusCollectorHandlers {
    * right after a restart, the first event of a pane would otherwise have no baseline.
    */
   onBaseline: (panes: readonly HerdrPane[]) => void;
+  /** Every pane's layout as of each reconcile's snapshot: a mirror's grid is drawn from it (pane-size.ts). */
+  onLayouts?: (layouts: SessionSnapshot["layouts"]) => void;
   /**
    * Status events were lost (the status connection closed under us, e.g. herdr's
    * `events_lost`): this snapshot, taken after the new subscription started, is the
@@ -95,7 +97,7 @@ export interface StatusCollectorHandlers {
 /** What the collector talks to, and how long it waits: tests swap both. */
 export interface StatusCollectorDeps {
   subscribe: typeof subscribeEvents;
-  snapshot: () => Promise<{ panes: HerdrPane[] }>;
+  snapshot: () => Promise<{ panes: HerdrPane[]; layouts?: SessionSnapshot["layouts"] }>;
   reconnectMinMs: number;
   reconnectMaxMs: number;
   backstopMs: number;
@@ -371,6 +373,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
       const snapshot = await deps.snapshot();
       if (stopped) return;
       handlers.onBaseline(snapshot.panes);
+      if (snapshot.layouts !== undefined) handlers.onLayouts?.(snapshot.layouts);
       // a snapshot asked for a subscription that closed meanwhile may predate what the next
       // one misses: recovery waits for that one's own snapshot
       const resynced = resync !== null && resync === statusGeneration && statusSubscription !== null;
