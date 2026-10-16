@@ -1,6 +1,6 @@
-import "./test-herdr.ts";
+import { removeTempDir } from "./test-herdr.ts";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, Page } from "playwright-core";
@@ -370,6 +370,6 @@ setInterval(() => {}, 1000);
   } finally {
     await context.close();
     await workspaceClose(created.workspace.workspace_id).catch(() => {});
-    rmSync(root, { recursive: true, force: true });
+    await removeTempDir(root);
   }
 }

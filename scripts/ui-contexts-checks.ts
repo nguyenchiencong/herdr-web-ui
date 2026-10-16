@@ -1,5 +1,5 @@
-import "./test-herdr.ts";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { removeTempDir } from "./test-herdr.ts";
+import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { chromium, type Browser } from "playwright-core";
 import { createServer } from "../server/index.ts";
@@ -118,7 +118,7 @@ export async function runUiContextChecks(): Promise<void> {
   for (const workspace of workspaces) {
     try { await workspaceClose(workspace); } catch (error) { if (!isWorkspaceMissing(error)) cleanupErrors.push(error); }
   }
-  try { rmSync(root, { recursive: true, force: true }); } catch (error) { cleanupErrors.push(error); }
+  try { await removeTempDir(root); } catch (error) { cleanupErrors.push(error); }
 
   if (failed) {
     if (cleanupErrors.length) console.error(new AggregateError(cleanupErrors, "UI context fixture cleanup failed after the check failed"));

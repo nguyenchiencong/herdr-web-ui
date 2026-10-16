@@ -1,4 +1,4 @@
-import "./test-herdr.ts";
+import { removeTempDir } from "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -203,7 +203,7 @@ process.stdin.on("data", chunk => {
       }
     } finally { await desktop.close(); }
     console.log("PASS masked secret input: both lenses, no drafts/queue/echo, disconnect, background and cancel");
-  } finally { await context.close(); await workspaceClose(created.workspace.workspace_id); rmSync(root, { recursive: true, force: true }); }
+  } finally { await context.close(); await workspaceClose(created.workspace.workspace_id); await removeTempDir(root); }
 }
 
 if (import.meta.main) {
