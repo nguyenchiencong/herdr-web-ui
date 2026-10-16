@@ -33,6 +33,8 @@ interface Runtime {
   refreshing: boolean;
   refreshQueued: boolean;
   snapshotRevision: number;
+  /** bumped by each session-changed frame; a read one arrives during publishes its roster even when unchanged */
+  structuralRevision: number;
   terminals: Set<() => void>;
   /** the user cancelled this PC's bridge update: it is not started again on its own until the PC connects */
   updateCancelled?: boolean;
@@ -170,6 +172,8 @@ export class MachineManager {
   private localBusy = false;
   private localRefreshQueued = false;
   private localRevision = 0;
+  /** bumped by each session-changed frame; a read one arrives during publishes its roster even when unchanged */
+  private localStructuralRevision = 0;
   /** each local pane's agent as herdr last named it to the status collector */
   private heardAgents = new AgentNews();
   private localTimer: ReturnType<typeof setInterval>;
@@ -372,7 +376,7 @@ export class MachineManager {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  private runtime(machine: Machine): Runtime { return { machine, attempts: 0, generation: 0, refreshing: false, refreshQueued: false, snapshotRevision: 0, terminals: new Set() }; }
+  private runtime(machine: Machine): Runtime { return { machine, attempts: 0, generation: 0, refreshing: false, refreshQueued: false, snapshotRevision: 0, structuralRevision: 0, terminals: new Set() }; }
   list(): Machine[] { return [this.local, ...[...this.machines.values()].map((r) => r.machine)]; }
   subscribe(listener: (event: MachineEvent) => void): () => void {
     this.listeners.add(listener);
@@ -382,9 +386,10 @@ export class MachineManager {
   /**
    * A roster goes out when it differs from the one last sent, and anyway once ROSTER_RESEND_MS has passed since
    * it last went out: a 5 s read that finds the same machines would otherwise send nothing, so a drifted browser
-   * copy would never be corrected. An event about one machine always goes out.
+   * copy would never be corrected. An event about one machine always goes out, and so does a read that a
+   * structural change arrived during (`structural`): continuous layout changes must not starve roster publication (#725).
    */
-  private emit(event?: MachineEvent): void {
+  private emit(event?: MachineEvent, structural = false): void {
     if (this.stopped) return;
     if (event) {
       for (const listener of this.listeners) listener(event);
@@ -393,7 +398,7 @@ export class MachineManager {
     const machines = this.list();
     const json = JSON.stringify(machines);
     const now = Date.now();
-    if (json === this.rosterJson && now - this.rosterSentAt < ROSTER_RESEND_MS) return;
+    if (!structural && json === this.rosterJson && now - this.rosterSentAt < ROSTER_RESEND_MS) return;
     this.rosterJson = json;
     this.rosterSentAt = now;
     for (const listener of this.listeners) listener({ type: "machines", machines });
@@ -402,6 +407,7 @@ export class MachineManager {
     // Structural invalidations queue a follow-up below without discarding the
     // active read: continuous layout changes must not starve roster publication.
     // Status/exit patches still outrank any snapshot asked for before them.
+    if (message.type === "session-changed") this.localStructuralRevision++;
     if (["pane-status", "pane-exited"].includes(message.type)) {
       this.localRevision++;
       if (this.localBusy) this.localRefreshQueued = true;
@@ -432,6 +438,7 @@ export class MachineManager {
       do {
         this.localRefreshQueued = false;
         const revision = this.localRevision;
+        const structuralRevision = this.localStructuralRevision;
         try {
           const snapshot = await this.readLocal();
           if (this.stopped) break;
@@ -445,7 +452,7 @@ export class MachineManager {
           if (revision !== this.localRevision) { this.localRefreshQueued = true; continue; }
           this.local.state = "error"; this.local.error = String(e instanceof Error ? e.message : e);
         }
-        this.emit();
+        this.emit(undefined, this.localStructuralRevision !== structuralRevision);
       } while (this.localRefreshQueued && !this.stopped);
     } finally { this.localBusy = false; }
   }
@@ -812,6 +819,7 @@ export class MachineManager {
       do {
         runtime.refreshQueued = false;
         const revision = runtime.snapshotRevision;
+        const structuralRevision = runtime.structuralRevision;
         try {
           const r = await fetch(endpoint.url + "/api/session", { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(15_000) });
           if (!r.ok) throw new Error(`Remote herdr unavailable (${r.status})`);
@@ -821,7 +829,7 @@ export class MachineManager {
           runtime.machine.snapshot = snapshot; runtime.machine.error = null;
           this.saveSoon();
           this.push.seed(forAlerts(snapshot.panes), runtime.machine.id, runtime.machine.name);
-          this.emit();
+          this.emit(undefined, runtime.structuralRevision !== structuralRevision);
         } catch (e) {
           if (generation !== runtime.generation || this.stopped) return;
           if (revision !== runtime.snapshotRevision) { runtime.refreshQueued = true; continue; }
@@ -852,6 +860,7 @@ export class MachineManager {
       let message: ServerMessage;
       try { message = JSON.parse(String(event.data)); } catch { return; }
       // session-changed queues one follow-up, but lets the active roster publish.
+      if (message.type === "session-changed") runtime.structuralRevision++;
       if (["snapshot", "pane-status", "pane-exited"].includes(message.type)) runtime.snapshotRevision++;
       if (message.type === "snapshot") { runtime.machine.snapshot = message.snapshot; this.push.seed(forAlerts(message.snapshot.panes), runtime.machine.id, runtime.machine.name); this.emit(); }
       if (message.type === "pane-status") {

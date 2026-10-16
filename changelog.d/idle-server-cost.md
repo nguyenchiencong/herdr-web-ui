@@ -10,5 +10,6 @@
   replay tail is trimmed in batches; what a late joiner replays is unchanged.
 - An OmO task folder with many records is counted in the background, so a status poll no longer
   blocks the server while it reads every record.
-- The PC list is pushed to browsers when it changes, and otherwise once a minute so a drifted
-  browser copy is corrected; machines.json is written only when it has changed.
+- The PC list is pushed to browsers when it changes, when a layout change reaches the server
+  while the list is being read, and otherwise once a minute so a drifted browser copy is
+  corrected; machines.json is written only when it has changed.
