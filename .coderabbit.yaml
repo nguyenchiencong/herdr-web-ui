@@ -42,12 +42,6 @@ reviews:
         never manual edits. Keep HTTP and WebSocket contracts consistent on
         both sides. Release tags are visible to installed updaters immediately;
         publish them only after the exact commit passes validation.
-    - path: '.github/workflows/**'
-      instructions: >-
-        PR code runs without write tokens or repository secrets. Avoid
-        pull_request_target for checkout and execution of PR code. Do not
-        interpolate untrusted input directly into shell scripts. Release
-        publishing must depend on successful validation of the same commit.
 knowledge_base:
   code_guidelines:
     enabled: true
