@@ -1,6 +1,6 @@
 import { authenticatedWebSocket } from "./remote-websocket.ts";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync } from "node:fs";
 import { createServer as tcpServer } from "node:net";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ import { sameSshSession, type HerdrMachineProfile } from "./herdr-profiles.ts";
 import { validateTarget } from "./machine-security.ts";
 import { detectHost, HERDR_INSTALL_CMD } from "./remote-host.ts";
 import { SshConnection } from "./ssh.ts";
+import { type JsonEntries, readJsonEntries, readJsonState, writeFileAtomic } from "./state-file.ts";
 
 interface StoredMachine { id: string; name: string; target: SshTarget; enabled: boolean; snapshot?: SessionSnapshot | null }
 interface Runtime {
@@ -52,6 +53,24 @@ interface JobState {
   finished: Promise<void>;
 }
 const DEFAULT_SETTINGS: MachineSettings = { auto_update_bridges: true };
+
+/** machine-settings.json: the one setting the app keeps, or undefined when the file holds no such boolean. */
+function savedSettings(value: unknown): MachineSettings | undefined {
+  const settings = value as Partial<MachineSettings> | null;
+  return typeof settings === "object" && settings !== null && typeof settings.auto_update_bridges === "boolean" ? { auto_update_bridges: settings.auto_update_bridges } : undefined;
+}
+
+/** One registration of machines.json: an id, name, enabled flag and SSH target that all check out; undefined when one does not. */
+function storedMachine(value: unknown, kept: readonly StoredMachine[]): StoredMachine | undefined {
+  const item = value as Partial<StoredMachine> | null;
+  if (!item || typeof item.id !== "string" || !/^[a-f0-9-]{36}$/.test(item.id) || kept.some((other) => other.id === item.id)
+    || typeof item.name !== "string" || typeof item.enabled !== "boolean") return undefined;
+  try {
+    return { ...item, id: item.id, name: item.name, enabled: item.enabled, target: validateTarget(item.target) };
+  } catch {
+    return undefined;
+  }
+}
 
 /** The step a job shows between an approve/answer and the next stage() the setup reaches. */
 export function actionStep(action: "approve" | "answer"): string {
@@ -153,6 +172,10 @@ export class MachineManager {
   private localTimer: ReturnType<typeof setInterval>;
   private saveTimer?: ReturnType<typeof setTimeout>;
   private profileState: HerdrProfileState;
+  /** machines.json is read before a PC is added to it or anything is written over it; until then it is unread */
+  private registryLoaded = false;
+  private unreadRegistry: string | undefined;
+  private settingsLoaded = false;
   private statePath: string;
   private sshDir: string;
   private local: Machine = { id: LOCAL_MACHINE, name: hostname(), kind: "local", enabled: true, state: "connecting", error: null, snapshot: null };
@@ -170,24 +193,70 @@ export class MachineManager {
     this.statePath = join(stateDir, "machines.json");
     this.sshDir = join(stateDir, "ssh");
     this.settingsPath = join(stateDir, "machine-settings.json");
-    try {
-      const saved: unknown = JSON.parse(readFileSync(this.settingsPath, "utf8"));
-      if (saved && typeof saved === "object" && typeof (saved as MachineSettings).auto_update_bridges === "boolean") this.preferences.auto_update_bridges = (saved as MachineSettings).auto_update_bridges;
-    } catch { /* absent or unreadable: the defaults */ }
-    if (existsSync(this.statePath)) {
-      const saved: unknown = JSON.parse(readFileSync(this.statePath, "utf8"));
-      if (!Array.isArray(saved)) throw new Error("Invalid machines.json; registrations were preserved");
-      for (const item of saved as StoredMachine[]) {
-        if (!/^[a-f0-9-]{36}$/.test(item.id) || typeof item.name !== "string" || typeof item.enabled !== "boolean") throw new Error("Invalid machine registration");
-        const machine: Machine = { id: item.id, name: item.name, kind: "ssh", enabled: item.enabled, target: validateTarget(item.target), state: "disconnected", snapshot: item.snapshot ?? null, error: null };
-        const runtime = this.runtime(machine);
-        this.machines.set(item.id, runtime);
-        if (item.enabled) queueMicrotask(() => void this.reconnect(runtime));
-      }
-    }
+    this.loadSettings();
+    this.loadRegistry();
+    this.sweepRecoveredKeys();
     void this.refreshLocal();
     this.localTimer = setInterval(() => void this.refreshLocal(), 5000);
     this.localTimer.unref();
+  }
+  /** machines.json, read once. Until it reads, no PC is added to it and nothing is written over it. */
+  private loadRegistry(): void {
+    let saved: JsonEntries<StoredMachine> | undefined;
+    try {
+      saved = readJsonEntries(this.statePath, storedMachine, "id");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== this.unreadRegistry) console.error(`machines: ${this.statePath} could not be read; saved PCs are not shown until it can be (${message})`);
+      this.unreadRegistry = message;
+      return;
+    }
+    this.registryLoaded = true;
+    this.unreadRegistry = undefined;
+    for (const item of saved?.entries ?? []) {
+      if (this.machines.has(item.id)) continue;
+      const machine: Machine = { id: item.id, name: item.name, kind: "ssh", enabled: item.enabled, target: item.target, state: "disconnected", snapshot: item.snapshot ?? null, error: null };
+      const runtime = this.runtime(machine);
+      this.machines.set(item.id, runtime);
+      if (item.enabled) queueMicrotask(() => void this.reconnect(runtime));
+    }
+  }
+  /** Reads machines.json if it has not been read yet; false while it cannot be. */
+  private ensureRegistry(): boolean {
+    if (!this.registryLoaded) this.loadRegistry();
+    return this.registryLoaded;
+  }
+  /** machine-settings.json: read until it has been, and a change waits for that. */
+  private loadSettings(): void {
+    try {
+      const saved = readJsonState(this.settingsPath, savedSettings);
+      if (saved) this.preferences.auto_update_bridges = saved.auto_update_bridges;
+      this.settingsLoaded = true;
+    } catch (error) {
+      console.error(`machines: ${this.settingsPath} could not be read; machine settings wait until it can be (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+  /**
+   * herdr-profile-state.json was damaged: the approvals it held are lost and each PC asks for its approval
+   * again. The key of a saved herdr PC whose approval was lost may still be trusted on its remote, so it is
+   * removed before any approval can reuse it. Manual PCs, running jobs and PCs whose approval survived keep
+   * theirs. Waits until machines.json is read, since its manual PCs name keys that stay.
+   */
+  private sweepRecoveredKeys(): boolean {
+    if (!this.profileState.recovered) return true;
+    if (!this.ensureRegistry()) return false;
+    const kept = new Set<string>([...this.machines.values()].filter(({ machine }) => !machine.herdr_profile_id).map(({ machine }) => machine.id));
+    for (const job of this.jobs.values()) kept.add(job.public.machine_id);
+    for (const profileId of this.profileState.profileIds()) kept.add(herdrMachineId(profileId));
+    let names: string[] = [];
+    try { names = readdirSync(this.sshDir); } catch { /* no PC has been set up yet */ }
+    for (const name of names) {
+      const id = name.replace(/\.pub$/, "");
+      if (!/^[a-f0-9-]{36}$/.test(id) || kept.has(id)) continue;
+      try { this.removeKey(id); } catch (error) { console.error(`A saved PC's key could not be removed (${error instanceof Error ? error.message : String(error)})`); }
+    }
+    this.profileState.recovered = false;
+    return true;
   }
   /** Serial polling: a broken catalog preserves the last roster instead of removing PCs. */
   watchHerdrProfiles(read: () => Promise<HerdrMachineProfile[]>, intervalMs = 5000): void {
@@ -219,6 +288,8 @@ export class MachineManager {
   }
   syncHerdrProfiles(profiles: HerdrMachineProfile[]): void {
     if (this.stopped) return;
+    // nothing is reconciled before the saved approvals have been read, nor while a damaged file's keys are pending removal
+    if (!this.profileState.ensureLoaded() || !this.sweepRecoveredKeys()) return;
     const wanted = new Set<string>();
     let changed = false;
     const errors: unknown[] = [];
@@ -359,25 +430,25 @@ export class MachineManager {
     this.saveTimer.unref();
   }
   private persist(): void {
-    mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
-    const data: StoredMachine[] = [...this.machines.values()].filter(({ machine }) => !machine.herdr_profile_id).map(({ machine: m }) => ({ id: m.id, name: m.name, target: m.target!, enabled: m.enabled, snapshot: m.snapshot }));
-    const tmp = this.statePath + ".tmp";
-    writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
-    chmodSync(tmp, 0o600); renameSync(tmp, this.statePath);
+    // a registry that has not been read is not written over: this run's PCs would replace the saved ones
+    if (this.ensureRegistry()) {
+      const data: StoredMachine[] = [...this.machines.values()].filter(({ machine }) => !machine.herdr_profile_id).map(({ machine: m }) => ({ id: m.id, name: m.name, target: m.target!, enabled: m.enabled, snapshot: m.snapshot }));
+      writeFileAtomic(this.statePath, JSON.stringify(data), { mode: 0o600 });
+    }
     for (const { machine } of this.machines.values()) if (machine.herdr_profile_id) this.profileState.saveSnapshot(machine.herdr_profile_id, machine.snapshot);
     this.profileState.flush();
   }
   job(id: string): SetupJob | undefined { return this.jobs.get(id)?.public; }
   settings(): MachineSettings { return { ...this.preferences }; }
   updateSettings(patch: Record<string, unknown>): MachineSettings {
+    // the file is not written over unless its saved value has been read: writing without it would lose that value
+    if (!this.settingsLoaded) this.loadSettings();
+    if (!this.settingsLoaded) throw new Error("Machine settings could not be read; try again");
     if (patch["auto_update_bridges"] !== undefined) {
       if (typeof patch["auto_update_bridges"] !== "boolean") throw new Error("auto_update_bridges must be boolean");
       this.preferences.auto_update_bridges = patch["auto_update_bridges"];
     }
-    mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
-    const tmp = this.settingsPath + ".tmp";
-    writeFileSync(tmp, JSON.stringify(this.preferences), { mode: 0o600 });
-    renameSync(tmp, this.settingsPath);
+    writeFileAtomic(this.settingsPath, JSON.stringify(this.preferences), { mode: 0o600 });
     return this.settings();
   }
   /**
@@ -406,6 +477,8 @@ export class MachineManager {
     if ([...this.jobs.values()].filter((j) => !["connected", "failed", "cancelled"].includes(j.public.phase)).length >= 4) throw new Error("Finish or cancel the current connection jobs first");
     if (request.machine_id && !existing) throw new Error("PC not found");
     if (existing && [...this.jobs.values()].some((j) => j.public.machine_id === existing.machine.id && !["connected", "failed", "cancelled"].includes(j.public.phase))) throw new Error("A connection job for this PC is already running");
+    // a PC saved here is written to machines.json, which has to be read before a PC is added to it
+    if (!existing?.machine.herdr_profile_id && !this.ensureRegistry()) throw new Error("Saved PCs could not be read; try again");
     const id = randomUUID();
     const machineId = existing?.machine.id ?? randomUUID();
     if (existing?.machine.herdr_profile_id && (!existing.machine.enabled || !existing.machine.target || !sameSshSession(target, existing.machine.target))) throw new Error("This PC is managed by herdr; refresh its saved machine before setup");

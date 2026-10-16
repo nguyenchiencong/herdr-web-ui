@@ -1,9 +1,17 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { MAX_PREFERENCES_BYTES, sharedPreferencesBody, type PreferencesChange, type SharedPreferences } from "../shared/preferences.ts";
 import { badRequest, isJsonObject, jsonResponse } from "./http.ts";
+import { readJsonState, writeFileAtomic } from "./state-file.ts";
 
 const byteLength = (text: string): number => new TextEncoder().encode(text).length;
+
+/** The document a file holds, or undefined when it holds none. */
+function savedPreferences(value: unknown): SharedPreferences | undefined {
+  const body = sharedPreferencesBody(value);
+  if (body === null) return undefined;
+  const revision = isJsonObject(value) && Number.isSafeInteger(value["revision"]) ? value["revision"] as number : 0;
+  return { revision: Math.max(0, revision), settings: body.settings, ...(body.pins === undefined ? {} : { pins: body.pins }) };
+}
 
 /** The document a change would make is over MAX_PREFERENCES_BYTES; nothing was kept. */
 export class PreferencesTooLarge extends Error {
@@ -20,31 +28,34 @@ export class PreferenceStore {
   private current: SharedPreferences = { revision: 0, settings: {} };
   private readonly path: string;
   private readonly listeners = new Set<(preferences: SharedPreferences) => void>();
+  /** false until the file has been read: a change is refused, not kept over a document this run never read */
+  private loaded = false;
 
   constructor(stateDir: string) {
     this.path = join(stateDir, "preferences.json");
     try {
-      const parsed: unknown = JSON.parse(readFileSync(this.path, "utf8"));
-      const body = sharedPreferencesBody(parsed);
-      const revision = isJsonObject(parsed) && Number.isSafeInteger(parsed["revision"]) ? parsed["revision"] as number : 0;
-      if (body !== null) this.current = { revision: Math.max(0, revision), settings: body.settings, ...(body.pins === undefined ? {} : { pins: body.pins }) };
+      this.load();
     } catch (error) {
-      // a missing file is a server that has shared nothing yet; a damaged one is replaced by the next write
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Cannot read ${this.path}; shared preferences start empty`);
+      // the server starts without the shared document; a change reads the file again before it is written
+      console.error(`preferences: ${this.path} could not be read; shared preferences start empty until it can be (${error instanceof Error ? error.message : String(error)})`);
     }
+  }
+
+  /** A missing file is a server that has shared nothing yet; a damaged one is moved aside and starts empty. */
+  private load(): void {
+    this.current = readJsonState(this.path, savedPreferences) ?? this.current;
+    this.loaded = true;
   }
 
   get(): SharedPreferences { return this.current; }
 
   set(change: PreferencesChange): SharedPreferences {
+    if (!this.loaded) this.load();
     const pins = change.pins ?? this.current.pins;
     const next: SharedPreferences = { revision: this.current.revision + 1, settings: { ...this.current.settings, ...change.settings }, ...(pins === undefined ? {} : { pins }) };
     const text = `${JSON.stringify(next, null, 2)}\n`;
     if (byteLength(JSON.stringify(next)) > MAX_PREFERENCES_BYTES) throw new PreferencesTooLarge();
-    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-    const temporary = `${this.path}.${process.pid}.tmp`;
-    writeFileSync(temporary, text, { mode: 0o600 });
-    renameSync(temporary, this.path);
+    writeFileAtomic(this.path, text, { mode: 0o600 });
     this.current = next;
     for (const listener of [...this.listeners]) listener(this.current);
     return this.current;

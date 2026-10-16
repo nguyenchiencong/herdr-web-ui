@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,10 +8,11 @@ import { isTaggedNode, parseTailscaleOwner } from "./tailscale.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "herdr-devices-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => mock.restore());
 
 describe("DeviceStore", () => {
   it("keeps an unreadable or invalid registry gated and intact for recovery", () => {
-    for (const contents of ["{broken", "null", "{}", '{"devices":[]}', '{"gate_closed_at":null,"devices":[{}]}']) {
+    for (const contents of ["{broken", "null", "{}", '{"devices":[]}', '{"gate_closed_at":null,"devices":[{}]}', "\0".repeat(16)]) {
       const root = mkdtempSync(join(dir, "invalid-"));
       const path = join(root, "devices.json");
       writeFileSync(path, contents);
@@ -193,8 +195,7 @@ it("reports failed registry writes without committing a pair, rename or revocati
   store.match(first.token);
   let closed = false;
   store.onRevoke(first.device.id, () => { closed = true; });
-  const blocked = join(root, `devices.json.${process.pid}.tmp`);
-  mkdirSync(blocked);
+  const rename = spyOn(fs, "renameSync").mockImplementation(() => { throw Object.assign(new Error("locked"), { code: "EPERM" }); });
   const code = store.startPairing().code;
   expect(() => store.pair(code, "Failed pair", "drive")).toThrow();
   expect(() => store.update(first.device.id, { label: "Failed rename" })).toThrow();
@@ -203,7 +204,7 @@ it("reports failed registry writes without committing a pair, rename or revocati
   expect(store.list(null).map((d) => d.label)).toEqual(["Original"]);
   expect(store.match(first.token)?.label).toBe("Original");
   expect(new DeviceStore(root).match(first.token)?.label).toBe("Original");
-  rmSync(blocked, { recursive: true });
+  rename.mockRestore();
   expect(store.pair(code, "Retry", "drive")).not.toBeNull();
   expect(store.revoke(first.device.id)).toBe(true);
   expect(closed).toBe(true);
@@ -214,13 +215,12 @@ it("does not authorize a first-pair cookie when promotion cannot be persisted", 
   const root = mkdtempSync(join(dir, "promotion-failure-"));
   const store = new DeviceStore(root);
   const candidate = store.pair(store.startPairing().code, "Pending", "drive")!;
-  const blocked = join(root, `devices.json.${process.pid}.tmp`);
-  mkdirSync(blocked);
+  const rename = spyOn(fs, "renameSync").mockImplementation(() => { throw Object.assign(new Error("locked"), { code: "EPERM" }); });
   expect(() => store.match(candidate.token)).toThrow();
   expect(store.gated).toBe(false);
   expect(store.list(null)).toEqual([]);
   expect(new DeviceStore(root).gated).toBe(false);
-  rmSync(blocked, { recursive: true });
+  rename.mockRestore();
   expect(store.match(candidate.token)).toEqual(candidate.device);
   expect(store.gated).toBe(true);
   expect(new DeviceStore(root).match(candidate.token)).toEqual(candidate.device);

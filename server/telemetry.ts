@@ -8,11 +8,11 @@
  * send nothing.
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { NOTICE_VERSION, telemetrySettings, type InstallMethod, type TelemetryChange, type TelemetryEvent, type TelemetrySettings, type TelemetryStatus } from "../shared/telemetry.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { updateRequestAllowed } from "./update-api.ts";
+import { readJsonState, writeFileAtomic } from "./state-file.ts";
 
 export const TELEMETRY_URL = "https://herdr-web-ui-telemetry.devswha.workers.dev/v1/events";
 const FILE = "telemetry.json";
@@ -91,20 +91,22 @@ function telemetryChange(value: unknown): TelemetryChange | null {
   }
 }
 
-function readSaved(file: string): Saved | null {
-  try {
-    const value: unknown = JSON.parse(readFileSync(file, "utf8"));
-    if (!isJsonObject(value) || typeof value["install_id"] !== "string" || value["install_id"] === "") return null;
-    return {
-      install_id: value["install_id"],
-      enabled: value["enabled"] !== false,
-      // a notice from before it said what is sent now does not count: it is shown again first
-      notice_seen_at: value["notice_version"] === NOTICE_VERSION && typeof value["notice_seen_at"] === "string" ? value["notice_seen_at"] : null,
-      notice_version: NOTICE_VERSION,
-      reported_version: typeof value["reported_version"] === "string" ? value["reported_version"] : null,
-      settings: telemetrySettings(value["settings"]),
-    };
-  } catch { return null; }
+/** The saved state a file holds: undefined for a missing file, and for one that is not a saved state (moved aside). */
+function readSaved(file: string): Saved | undefined {
+  return readJsonState(file, savedState);
+}
+
+function savedState(value: unknown): Saved | undefined {
+  if (!isJsonObject(value) || typeof value["install_id"] !== "string" || value["install_id"] === "") return undefined;
+  return {
+    install_id: value["install_id"],
+    enabled: value["enabled"] !== false,
+    // a notice from before it said what is sent now does not count: it is shown again first
+    notice_seen_at: value["notice_version"] === NOTICE_VERSION && typeof value["notice_seen_at"] === "string" ? value["notice_seen_at"] : null,
+    notice_version: NOTICE_VERSION,
+    reported_version: typeof value["reported_version"] === "string" ? value["reported_version"] : null,
+    settings: telemetrySettings(value["settings"]),
+  };
 }
 
 export class Telemetry {
@@ -115,6 +117,8 @@ export class Telemetry {
   private readonly file: string;
   /** false when the state file could not be written: then nothing is sent (it could not be remembered) */
   private writable = true;
+  /** the state file could not be read on the last try: what it holds is not known, so nothing is sent, changed or saved until it reads */
+  private unread = false;
 
   constructor(private readonly options: {
     stateDir: string;
@@ -131,9 +135,16 @@ export class Telemetry {
     noticeGraceMs?: number;
   }) {
     this.file = join(options.stateDir, FILE);
-    const saved = readSaved(this.file);
+    let saved: Saved | undefined;
+    try {
+      saved = readSaved(this.file);
+    } catch (error) {
+      // the app still starts; a file that cannot be read is not a new install, so nothing is sent or written over it
+      this.unread = true;
+      console.error(`telemetry: ${this.file} could not be read, so nothing will be sent until it can be (${error instanceof Error ? error.message : String(error)})`);
+    }
     this.saved = saved ?? { install_id: randomUUID(), enabled: true, notice_seen_at: null, notice_version: NOTICE_VERSION, reported_version: null, settings: null };
-    if (!saved) {
+    if (!saved && !this.unread) {
       try { this.persist(); } catch (error) {
         // the app still starts; telemetry just stays silent
         this.writable = false;
@@ -146,15 +157,21 @@ export class Telemetry {
 
   /** another server on the same state directory may have changed the switch: its file wins */
   private refresh(): void {
-    const latest = readSaved(this.file);
+    let latest: Saved | undefined;
+    try {
+      latest = readSaved(this.file);
+    } catch {
+      // unreadable this time: what is held stays, and nothing is sent or changed until it reads
+      this.unread = true;
+      return;
+    }
+    this.unread = false;
     if (latest) this.saved = latest;
   }
 
   private persist(): void {
-    mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
-    const temp = `${this.file}.${process.pid}.tmp`;
-    writeFileSync(temp, JSON.stringify(this.saved), { mode: 0o600 });
-    renameSync(temp, this.file);
+    if (this.unread) throw new Error(`${this.file} could not be read: nothing was saved`);
+    writeFileAtomic(this.file, JSON.stringify(this.saved), { mode: 0o600 });
     this.writable = true;
   }
 
@@ -199,6 +216,7 @@ export class Telemetry {
     const clean = telemetryChange(patch);
     if (!clean) throw new TypeError("Invalid telemetry change");
     this.refresh();
+    if (this.unread) throw new Error("The telemetry settings could not be read; try again");
     if (clean.enabled !== undefined) this.saved.enabled = clean.enabled;
     // kept for the next install/update event; telling it sends nothing by itself
     if (clean.settings !== undefined) this.saved.settings = clean.settings;
@@ -221,6 +239,7 @@ export class Telemetry {
     if (this.sending) return this.sending;
     if (!this.writable) return Promise.resolve();
     this.refresh();
+    if (this.unread) return Promise.resolve();
     const event = this.pending();
     const seen = this.saved.notice_seen_at === null ? NaN : Date.parse(this.saved.notice_seen_at);
     if (!event || !this.saved.enabled || Number.isNaN(seen) || this.blocked()) return Promise.resolve();

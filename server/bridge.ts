@@ -1,10 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { BRIDGE_PROTOCOL, REMOTE_BUNDLE_VERSION, type BridgeIdentity } from "../shared/machines.ts";
 import { HerdrError, herdrSocketPath, ping } from "./herdr/client.ts";
 import { attachableIdentity, sidecarAvailable } from "./pty/sidecar.ts";
+import { writeFileAtomic } from "./state-file.ts";
 
 export interface BridgeDescriptor { managed_remote?: boolean; port: number; token: string; pid: number; socket_path: string; bridge_protocol: number; bundle_version: string }
 export function bridgeRegistry(): string { return join(homedir(), ".config/herdr-web-ui/bridges"); }
@@ -38,9 +39,6 @@ export function registerBridge(port: number, token = randomBytes(32).toString("h
       return { token, close() {} };
     } catch { /* stale descriptor */ }
   }
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ managed_remote: process.env["HERDR_WEB_REMOTE"] === "1", port, token, pid: process.pid, socket_path: socketPath(), bridge_protocol: BRIDGE_PROTOCOL, bundle_version: REMOTE_BUNDLE_VERSION } satisfies BridgeDescriptor), { mode: 0o600 });
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, path);
+  writeFileAtomic(path, JSON.stringify({ managed_remote: process.env["HERDR_WEB_REMOTE"] === "1", port, token, pid: process.pid, socket_path: socketPath(), bridge_protocol: BRIDGE_PROTOCOL, bundle_version: REMOTE_BUNDLE_VERSION } satisfies BridgeDescriptor), { mode: 0o600 });
   return { token, close() { try { if (JSON.parse(readFileSync(path, "utf8")).pid === process.pid) unlinkSync(path); } catch {} } };
 }

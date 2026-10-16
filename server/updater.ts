@@ -1,9 +1,10 @@
 /** Build in a private checkout. The source tree and the serving build stay intact. */
 import { spawn } from "node:child_process";
-import { closeSync, constants, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { noInstalledNotes, noUpdateNotes, unmanagedUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../shared/update.ts";
 import { compareVersions, releaseNotes, releaseSummaries, SUMMARIES_FILE } from "./release-notes.ts";
+import { readJsonState, writeFileAtomic } from "./state-file.ts";
 
 export interface Release {
   directory: string; revision: string; source_revision: string;
@@ -40,6 +41,20 @@ export function readNotesFile(path: string): string {
 const SHA = /^[0-9a-f]{40,64}$/;
 /** A release is a plain `vX.Y.Z` tag: `remote-v*` bundle tags and pre-releases never qualify. */
 const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+
+/** failed.json: the revision an automatic install failed on; undefined when the file is not that. */
+function savedFailure(value: unknown): { revision?: string } | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { revision } = value as { revision?: unknown };
+  return revision === undefined || typeof revision === "string" ? { revision } : undefined;
+}
+
+/** current.json: the release an update installed; undefined when the file lacks what a release needs. */
+function savedRelease(value: unknown): Release | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const release = value as Partial<Release>;
+  return typeof release.directory === "string" && typeof release.revision === "string" && typeof release.source_revision === "string" ? release as Release : undefined;
+}
 
 function packageVersion(directory: string): string | null {
   try {
@@ -111,10 +126,11 @@ export class Updater {
 
   async initialize(): Promise<Release | null> {
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
+    // Both files are replaced when an install completes or fails, so a copy that cannot be read now is not kept from that.
     try {
-      const failed = JSON.parse(readFileSync(join(this.options.stateDir, "failed.json"), "utf8")) as { revision?: string };
-      if (failed.revision && SHA.test(failed.revision)) this.failedRevision = failed.revision;
-    } catch { /* no failed automatic candidate */ }
+      const failed = readJsonState(join(this.options.stateDir, "failed.json"), savedFailure);
+      if (failed?.revision && SHA.test(failed.revision)) this.failedRevision = failed.revision;
+    } catch { /* unreadable now: no failed candidate is remembered */ }
     try {
       this.sourceRevision = await this.git("rev-parse", "HEAD");
       if (!SHA.test(this.sourceRevision)) throw new Error("Invalid source revision");
@@ -122,12 +138,12 @@ export class Updater {
       const reason = await this.sourceBlock();
       if (!reason) {
         try {
-          const saved = JSON.parse(readFileSync(join(this.options.stateDir, "current.json"), "utf8")) as Release;
+          const saved = readJsonState(join(this.options.stateDir, "current.json"), savedRelease);
           // Only directories created by this updater may be resumed.
-          if (saved.source_revision === this.sourceRevision && SHA.test(saved.revision) &&
+          if (saved && saved.source_revision === this.sourceRevision && SHA.test(saved.revision) &&
               saved.directory.startsWith(join(this.options.stateDir, "release-")) &&
               await runCommand(saved.directory, ["git", "rev-parse", "HEAD"]) === saved.revision) this.release = saved;
-        } catch { /* missing/stale release: use the source checkout */ }
+        } catch { /* stale or unreadable release: use the source checkout */ }
       }
       this.installed = this.brought(this.release);
       this.patch({ current_revision: this.release.revision, current_version: packageVersion(this.release.directory), blocked_reason: reason });
@@ -291,9 +307,7 @@ export class Updater {
           previous_version: previous ? packageVersion(previous.directory) : null, installed_at: new Date().toISOString() };
         this.patch({ phase: "restarting", step: "restart" });
         await this.options.activate(next, () => {
-          const file = join(this.options.stateDir, "current.json");
-          writeFileSync(`${file}.tmp`, JSON.stringify(next), { mode: 0o600 });
-          renameSync(`${file}.tmp`, file);
+          writeFileAtomic(join(this.options.stateDir, "current.json"), JSON.stringify(next), { mode: 0o600 });
         });
         this.release = next;
         stage = null;
@@ -319,7 +333,7 @@ export class Updater {
       if (attempted && !this.controller.signal.aborted) {
         this.failedRevision = attempted;
         try {
-          writeFileSync(join(this.options.stateDir, "failed.json"), JSON.stringify({ revision: attempted }), { mode: 0o600 });
+          writeFileAtomic(join(this.options.stateDir, "failed.json"), JSON.stringify({ revision: attempted }), { mode: 0o600 });
         } catch { /* the in-memory guard still prevents repeated automatic restarts */ }
       }
       this.patch({ phase: "error", step: null, error: error instanceof Error ? error.message : String(error) });

@@ -1,8 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { statSync } from "node:fs";
 
 import type { AgentStatus, SessionSnapshot } from "../shared/protocol.ts";
 import { herdrSocketPath } from "./herdr/client.ts";
+import { readJsonState, writeFileAtomic } from "./state-file.ts";
 
 /**
  * `done` for agents herdr loses track of on the way, and for the pane herdr has focused.
@@ -52,6 +52,12 @@ import { herdrSocketPath } from "./herdr/client.ts";
  */
 export type OmoRest = "failed" | "failed-before" | "answered";
 
+/** completions.json: the herdr it was kept for and the panes it holds; undefined when it is not that shape. */
+function savedCompletions(value: unknown): { herdr: string; finished?: unknown; finishedAgents?: unknown } | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && typeof (value as { herdr?: unknown }).herdr === "string"
+    ? value as { herdr: string; finished?: unknown; finishedAgents?: unknown } : undefined;
+}
+
 export class CompletionTracker {
   /** panes that worked (or were blocked) since they were last idle, done or seen, with the agent that did */
   private readonly worked = new Map<string, string | null>();
@@ -65,6 +71,8 @@ export class CompletionTracker {
   private order = 0;
   /** what the file holds, so it is written only when that changes */
   private saved = "";
+  /** the file could not be read at start: this run then never writes it */
+  private unread = false;
 
   /**
    * `file` keeps the state across restarts (none: memory only); `herdr` names the herdr
@@ -72,17 +80,24 @@ export class CompletionTracker {
    */
   constructor(private readonly file: string | null = null, private readonly herdr: () => string | null = herdrSocketId) {
     if (file === null) return;
+    let state: { herdr: string; finished?: unknown; finishedAgents?: unknown } | undefined;
     try {
-      const state = JSON.parse(readFileSync(file, "utf8")) as { herdr?: unknown; finished?: unknown; finishedAgents?: unknown };
-      const current = herdr();
-      if (current === null || state.herdr !== current) return;
-      const agents = state.finishedAgents && typeof state.finishedAgents === "object" && !Array.isArray(state.finishedAgents)
-        ? state.finishedAgents as Record<string, unknown> : {};
-      for (const pane of Array.isArray(state.finished) ? state.finished : []) {
-        if (typeof pane === "string") this.finished.set(pane, typeof agents[pane] === "string" ? agents[pane] as string : null);
-      }
-      this.saved = this.serialize(current);
-    } catch { /* none yet, or unreadable: start empty */ }
+      state = readJsonState(file, savedCompletions);
+    } catch (error) {
+      // what the file holds is not known, so this run never writes it: a save would replace the finished panes it kept
+      this.unread = true;
+      console.error(`completion state: ${file} could not be read, so nothing is saved until the next start (${error instanceof Error ? error.message : String(error)})`);
+      return;
+    }
+    if (state === undefined) return;
+    const current = herdr();
+    if (current === null || state.herdr !== current) return;
+    const agents = state.finishedAgents && typeof state.finishedAgents === "object" && !Array.isArray(state.finishedAgents)
+      ? state.finishedAgents as Record<string, unknown> : {};
+    for (const pane of Array.isArray(state.finished) ? state.finished : []) {
+      if (typeof pane === "string") this.finished.set(pane, typeof agents[pane] === "string" ? agents[pane] as string : null);
+    }
+    this.saved = this.serialize(current);
   }
 
   /**
@@ -263,16 +278,13 @@ export class CompletionTracker {
 
   /** Written whole, and only on a change: a crash mid-write must not leave half a file. */
   private save(): void {
-    if (this.file === null) return;
+    if (this.file === null || this.unread) return;
     const herdr = this.herdr();
     if (herdr === null) return;
     const state = this.serialize(herdr);
     if (state === this.saved) return;
     try {
-      mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
-      const temporary = `${this.file}.${process.pid}.tmp`;
-      writeFileSync(temporary, state, { mode: 0o600 });
-      renameSync(temporary, this.file);
+      writeFileAtomic(this.file, state, { mode: 0o600 });
       this.saved = state;
     } catch (error) {
       // a full disk costs the state after a restart, never the status itself

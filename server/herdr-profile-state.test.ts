@@ -1,12 +1,12 @@
-import { afterEach, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { afterEach, expect, it, mock, spyOn } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HerdrProfileState } from "./herdr-profile-state.ts";
 import type { SessionSnapshot } from "../shared/protocol.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { mock.restore(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 function directory() { const dir = mkdtempSync(join(tmpdir(), "herdr-profile-state-")); dirs.push(dir); return dir; }
 it("restores target-bound approval and cached panes without copying catalog fields", () => {
   const dir = directory(), target = { destination: "BuildBox", port: 2222, session: "agents" };
@@ -36,13 +36,49 @@ it("treats default as the unnamed session but does not merge ports or aliases", 
   expect(store.prune(new Set())).toEqual(["id"]);
   expect(store.approved("id", { destination: "BuildBox" })).toBe(false);
 });
-it("rejects corrupt approval state without overwriting it", () => {
+it("moves a damaged approval file aside, starts with no approvals, and marks the recovery", () => {
   const dir = directory(), path = join(dir, "herdr-profile-state.json");
-  for (const data of ['{}', '[{"profile_id":"id","binding":"bad","approved":true,"snapshot":null}]']) {
+  spyOn(console, "warn").mockImplementation(() => {});
+  for (const data of ['{}', "\0".repeat(6605)]) {
     writeFileSync(path, data);
-    expect(() => new HerdrProfileState(dir)).toThrow();
-    expect(readFileSync(path, "utf8")).toBe(data);
+    const store = new HerdrProfileState(dir);
+    expect(store.approved("id", { destination: "BuildBox" })).toBe(false);
+    expect(store.recovered).toBe(true);
+    expect(existsSync(path)).toBe(false);
   }
+  expect(readdirSync(dir).filter((name) => name.startsWith("herdr-profile-state.json.corrupt-"))).toHaveLength(2);
+});
+
+it("drops a damaged entry alone: the other approvals survive, and the file is kept as a copy", () => {
+  const dir = directory(), path = join(dir, "herdr-profile-state.json"), target = { destination: "BuildBox" };
+  const writer = new HerdrProfileState(dir);
+  writer.approve("kept", target);
+  writer.approve("damaged", target);
+  writer.flush();
+  const saved = JSON.parse(readFileSync(path, "utf8")) as Array<{ profile_id: string; binding: string }>;
+  for (const entry of saved) if (entry.profile_id === "damaged") entry.binding = "bad";
+  writeFileSync(path, JSON.stringify(saved));
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const restored = new HerdrProfileState(dir);
+  expect(restored.approved("kept", target)).toBe(true);
+  expect(restored.approved("damaged", target)).toBe(false);
+  expect(restored.recovered).toBe(true);
+  expect(existsSync(path)).toBe(true);
+  expect(readdirSync(dir).filter((name) => name.startsWith("herdr-profile-state.json.corrupt-"))).toHaveLength(1);
+  expect(String(warn.mock.calls[0]?.[0])).toContain("damaged");
+});
+
+it("a file that cannot be read is neither moved nor written over, and nothing is saved while it cannot be", () => {
+  const dir = directory(), path = join(dir, "herdr-profile-state.json");
+  mkdirSync(path);
+  spyOn(console, "error").mockImplementation(() => {});
+  const store = new HerdrProfileState(dir);
+  expect(store.ensureLoaded()).toBe(false);
+  store.approve("id", { destination: "BuildBox" });
+  store.flush();
+  expect(statSync(path).isDirectory()).toBe(true);
+  expect(readdirSync(dir)).toEqual(["herdr-profile-state.json"]);
+  expect(store.recovered).toBe(false);
 });
 
 it("connection consent is separate from installation approval and survives restart", () => {

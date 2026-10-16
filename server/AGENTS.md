@@ -10,3 +10,10 @@
 - The user's API keys go upstream only; no response or error message carries one.
 - Only Vite's fingerprinted `/assets/` may be cached long; `sw.js`, the manifest and the app shell
   must revalidate, or an installed PWA is pinned to an old build.
+- A state file that holds a trust decision is never moved aside as damaged: starting
+  `devices.json` empty would open the LAN, starting `portal/state.json` empty would hide a live
+  tunnel, and a new `vapid.json` would orphan every subscribed device. Those fail closed. New
+  state files load through `readJsonState` and write through `writeFileAtomic`
+  (`server/state-file.ts`). `readJsonState` moves a file aside only when it is damaged (it does not
+  parse, or has the wrong shape); any other read error throws and leaves the file in place, and a
+  loader that catches it must not save its empty state over that file.

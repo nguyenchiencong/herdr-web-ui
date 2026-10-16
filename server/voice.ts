@@ -4,13 +4,13 @@
  * log line or error message carries it.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   VOICE_DEFAULTS, VOICE_FORM, VOICE_KEYWORD_MAX_CHARS, VOICE_KEYWORDS_MAX, VOICE_MAX_AUDIO_BYTES,
   type VoiceErrorCode, type VoiceEvent, type VoiceMode, type VoiceStatus,
 } from "../shared/voice.ts";
 import { errorResponse, isJsonObject, jsonResponse } from "./http.ts";
+import { readJsonState, writeFileAtomic } from "./state-file.ts";
 
 const ENV_KEY = "HERDR_WEB_OPENAI_API_KEY";
 const ENV_BASE_URL = "HERDR_WEB_OPENAI_BASE_URL";
@@ -76,12 +76,9 @@ export interface VoiceServiceOptions {
   fetch(url: string, init: RequestInit): Promise<Response>;
 }
 
-/** Owner-only, and written whole: a crash mid-write must not leave half a key file. */
+/** Owner-only, durable and written whole (writeFileAtomic): a crash mid-write must not leave half a key file. */
 function writeJsonPrivate(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporary, path);
+  writeFileAtomic(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
 function baseUrlOf(value: string): string {
@@ -217,17 +214,8 @@ export class VoiceService {
   }
 
   private read(): VoiceFile {
-    let raw: string;
-    try {
-      raw = readFileSync(this.path, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-      throw error;
-    }
-    let parsed: unknown;
-    // the parser's message may quote the file, and the file holds the key
-    try { parsed = JSON.parse(raw); } catch { throw new Error(`${this.path} is not valid JSON`); }
-    const value = record(parsed);
+    // a damaged file is moved aside, never printed: it holds the key
+    const value: Record<string, unknown> = readJsonState(this.path, (parsed) => isJsonObject(parsed) ? parsed : undefined) ?? {};
     const file: VoiceFile = {};
     for (const field of FIELDS) {
       const stored = text(value[field]);

@@ -1,11 +1,25 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { SshTarget } from "../shared/machines.ts";
 import type { SessionSnapshot } from "../shared/protocol.ts";
+import { type JsonEntries, readJsonEntries, writeFileAtomic } from "./state-file.ts";
 
 /** `retiring`: this binding's key removal was started and has not succeeded yet. */
 interface ProfileState { binding: string; approved: boolean; connectionApproved: boolean; snapshot: SessionSnapshot | null; retiring?: true }
+/** One entry of herdr-profile-state.json; files from before connection consent have no `connectionApproved`. */
+interface SavedProfile extends Omit<ProfileState, "connectionApproved"> { profile_id: string; connectionApproved?: boolean }
+
+/** One entry of the file, or undefined when it is not of that shape or repeats a profile an earlier entry holds. */
+function savedProfile(value: unknown, kept: readonly SavedProfile[]): SavedProfile | undefined {
+  const item = value as Partial<SavedProfile> | null;
+  if (!item || typeof item.profile_id !== "string" || !item.profile_id || kept.some((other) => other.profile_id === item.profile_id)
+    || typeof item.binding !== "string" || !/^[a-f0-9]{64}$/.test(item.binding) || typeof item.approved !== "boolean"
+    || (item.connectionApproved !== undefined && typeof item.connectionApproved !== "boolean")
+    || (item.retiring !== undefined && item.retiring !== true)
+    || (item.snapshot !== null && (!item.snapshot || typeof item.snapshot !== "object" || !Array.isArray(item.snapshot.panes)))) return undefined;
+  return item as SavedProfile;
+}
 
 // Existing routes accept UUID-shaped machine IDs; deriving one keeps browser storage stable.
 export function herdrMachineId(profileId: string): string {
@@ -20,18 +34,44 @@ function binding(target: SshTarget | null): string {
 export class HerdrProfileState {
   private entries = new Map<string, ProfileState>();
   private dirty = false;
+  /** false until the file has been read: nothing is reconciled, approved or written before then */
+  private loaded = false;
+  private unreadError: string | undefined;
   private path: string;
-  constructor(private directory: string) {
+  /**
+   * Set when the file was damaged: moved aside, or an entry of it dropped. The approvals it held are
+   * lost, so MachineManager removes the keys of the saved herdr PCs that lost theirs.
+   */
+  recovered = false;
+  /** A damaged file is moved aside and its approvals start over; a damaged entry is dropped alone. */
+  constructor(directory: string) {
     this.path = join(directory, "herdr-profile-state.json");
-    if (!existsSync(this.path)) return;
-    const saved: unknown = JSON.parse(readFileSync(this.path, "utf8"));
-    if (!Array.isArray(saved)) throw new Error("Invalid herdr-profile-state.json; approvals were preserved");
-    for (const item of saved) {
-      if (!item || typeof item.profile_id !== "string" || !item.profile_id || this.entries.has(item.profile_id)
-        || typeof item.binding !== "string" || !/^[a-f0-9]{64}$/.test(item.binding) || typeof item.approved !== "boolean"
-        || (item.connectionApproved !== undefined && typeof item.connectionApproved !== "boolean")
-        || (item.retiring !== undefined && item.retiring !== true)
-        || (item.snapshot !== null && (!item.snapshot || typeof item.snapshot !== "object" || !Array.isArray(item.snapshot.panes)))) throw new Error("Invalid herdr-profile-state.json; approvals were preserved");
+    this.read();
+  }
+  /** Reads the file if it has not been read yet; false while it cannot be read. */
+  ensureLoaded(): boolean {
+    if (!this.loaded) this.read();
+    return this.loaded;
+  }
+  /** The profiles whose saved state survived the last read. */
+  profileIds(): string[] { return [...this.entries.keys()]; }
+  private read(): void {
+    const existed = existsSync(this.path);
+    let saved: JsonEntries<SavedProfile> | undefined;
+    try {
+      saved = readJsonEntries(this.path, savedProfile, "profile_id");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== this.unreadError) console.error(`herdr-profile-state: ${this.path} could not be read; saved herdr PCs wait until it can be (${message})`);
+      this.unreadError = message;
+      return;
+    }
+    this.loaded = true;
+    this.unreadError = undefined;
+    // a file moved aside reads as undefined, as a missing one does: only a file that existed had approvals to lose
+    if (existed && saved === undefined) this.recovered = true;
+    if (saved && saved.dropped.length > 0) this.recovered = true;
+    for (const item of saved?.entries ?? []) {
       this.entries.set(item.profile_id, { binding: item.binding, approved: item.approved, connectionApproved: item.connectionApproved ?? item.approved, snapshot: item.snapshot, ...(item.retiring ? { retiring: true as const } : {}) });
     }
   }
@@ -83,10 +123,8 @@ export class HerdrProfileState {
     return removed;
   }
   flush(): void {
-    if (!this.dirty) return;
-    mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-    const tmp = this.path + ".tmp";
-    writeFileSync(tmp, JSON.stringify([...this.entries].map(([profile_id, state]) => ({ profile_id, ...state }))), { mode: 0o600 });
-    chmodSync(tmp, 0o600); renameSync(tmp, this.path); this.dirty = false;
+    if (!this.dirty || !this.loaded) return;
+    writeFileAtomic(this.path, JSON.stringify([...this.entries].map(([profile_id, state]) => ({ profile_id, ...state }))), { mode: 0o600 });
+    this.dirty = false;
   }
 }

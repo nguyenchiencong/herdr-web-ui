@@ -32,8 +32,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import webpush from "web-push";
 
 import { paneStorageId } from "../shared/machines.ts";
@@ -50,6 +50,7 @@ import {
 } from "../shared/notify-policy.ts";
 import { badRequest, jsonResponse } from "./http.ts";
 import { isLoopbackHost } from "./access.ts";
+import { readJsonState, writeFileAtomic } from "./state-file.ts";
 
 /** A blocked agent is still blocked when the phone gets signal back; a newer push for the pane replaces it anyway. */
 const PUSH_TTL_SECONDS = 12 * 60 * 60;
@@ -136,12 +137,9 @@ function readJson(path: string): unknown {
   }
 }
 
-/** Owner-only, and written whole: a crash mid-write must not leave half a key file. */
+/** Owner-only, durable and written whole (writeFileAtomic): a crash mid-write must not leave half a key file. */
 function writeJsonPrivate(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporary, path);
+  writeFileAtomic(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
 function decodedLength(value: unknown): number {
@@ -201,6 +199,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   /** Created on first need: a server nobody subscribes to never writes a key. */
   function keys(): { publicKey: string; privateKey: string } {
     if (vapid) return vapid;
+    // read strictly: quarantining a damaged key would mint a new one and orphan every subscribed device
     const stored = readJson(vapidPath) as { publicKey?: unknown; privateKey?: unknown } | undefined;
     if (stored === undefined) {
       vapid = webpush.generateVAPIDKeys();
@@ -215,17 +214,15 @@ export function createPushService(options: PushServiceOptions): PushService {
 
   function store(): Map<string, PushSubscriptionRecord> {
     if (subscriptions) return subscriptions;
-    const stored = readJson(subscriptionsPath);
+    const stored = readJsonState(subscriptionsPath, (value) => Array.isArray(value) ? value : undefined);
     subscriptions = new Map();
-    if (Array.isArray(stored)) {
-      for (const entry of stored) {
-        const parsed = parseSubscription(entry, options);
-        const alerts = (entry as { alerts?: unknown } | null)?.alerts;
-        if (parsed) {
-          const owner = (entry as PushSubscriptionRecord).device_id;
-          subscriptions.set(parsed.endpoint, { ...parsed, ...(alerts === undefined ? {} : { alerts: parseAlerts(alerts) }),
-            ...(owner === null || typeof owner === "string" ? { device_id: owner } : {}) });
-        }
+    for (const entry of stored ?? []) {
+      const parsed = parseSubscription(entry, options);
+      const alerts = (entry as { alerts?: unknown } | null)?.alerts;
+      if (parsed) {
+        const owner = (entry as PushSubscriptionRecord).device_id;
+        subscriptions.set(parsed.endpoint, { ...parsed, ...(alerts === undefined ? {} : { alerts: parseAlerts(alerts) }),
+          ...(owner === null || typeof owner === "string" ? { device_id: owner } : {}) });
       }
     }
     return subscriptions;
@@ -233,20 +230,16 @@ export function createPushService(options: PushServiceOptions): PushService {
 
   function retiredStore(): Map<string, number> {
     if (retiredEndpoints) return retiredEndpoints;
-    retiredEndpoints = new Map();
-    let stored: unknown;
-    try {
-      stored = readJson(retiredPath);
-    } catch {
-      return retiredEndpoints; // an unreadable file only means a retired endpoint registers again once
-    }
-    if (!Array.isArray(stored)) return retiredEndpoints;
+    // read before the cache is set: a file that cannot be read throws, and an empty cache would be saved over it
+    const stored = readJsonState(retiredPath, (value) => Array.isArray(value) ? value : undefined) ?? [];
+    const endpoints = new Map<string, number>();
     const cutoff = (options.now ?? Date.now)() - RETIRED_TTL_MS;
     for (const entry of stored.slice(-RETIRED_LIMIT)) {
       const { hash, at } = (entry ?? {}) as { hash?: unknown; at?: unknown };
-      if (typeof hash === "string" && typeof at === "number" && at > cutoff) retiredEndpoints.set(hash, at);
+      if (typeof hash === "string" && typeof at === "number" && at > cutoff) endpoints.set(hash, at);
     }
-    return retiredEndpoints;
+    retiredEndpoints = endpoints;
+    return endpoints;
   }
 
   function persist(): void {

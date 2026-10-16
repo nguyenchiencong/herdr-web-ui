@@ -18,10 +18,11 @@
  * version is asked first and readiness has a deadline of its own.
  */
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PortalStatus } from "../shared/protocol.ts";
 import { errorResponse, isJsonObject, jsonResponse } from "./http.ts";
+import { writeFileAtomic } from "./state-file.ts";
 import { chunksOf } from "./remote-bundle.ts";
 import { updateRequestAllowed } from "./update-api.ts";
 import { windowsArgv, windowsProcessTable } from "./windows-processes.ts";
@@ -562,6 +563,7 @@ export class PortalService {
     }
   }
 
+  // Not moved aside when damaged: the recorded pid may be a tunnel still running, and starting as stopped would hide it.
   private saved(): SavedState {
     let value: unknown;
     try {
@@ -585,10 +587,7 @@ export class PortalService {
 
   /** at once, not awaited: a stop and a start's own save never interleave */
   private save(change: Partial<SavedState>): void {
-    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-    const temp = `${this.statePath}.tmp-${process.pid}`;
-    writeFileSync(temp, JSON.stringify({ ...this.saved(), ...change }), { mode: 0o600 });
-    renameSync(temp, this.statePath);
+    writeFileAtomic(this.statePath, JSON.stringify({ ...this.saved(), ...change }), { mode: 0o600 });
   }
 }
 
