@@ -50,6 +50,7 @@ describe("a Hermes process's own store", () => {
       env: { ...process.env, HERMES_HOME: home },
       stdin: "pipe",
       stdout: "pipe",
+      windowsHide: true,
     });
     const argv = ["hermes", "--profile", "work"];
     try {

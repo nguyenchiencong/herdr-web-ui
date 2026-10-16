@@ -24,7 +24,7 @@ if (!process.env.HERDR_SSH_QA_CONFIG) {
   writeFileSync(join(bin, "ssh"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\nexec '${Bun.which("ssh")!}' -F '${config}' "$@"\n`);
   chmodSync(join(bin, "ssh"), 0o700);
   try {
-    const child = Bun.spawn([process.execPath, import.meta.path], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HERDR_SSH_QA_CONFIG: config, HERDR_SSH_QA_CALLS: calls }, stdout: "inherit", stderr: "inherit", stdin: "ignore" });
+    const child = Bun.spawn([process.execPath, import.meta.path], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HERDR_SSH_QA_CONFIG: config, HERDR_SSH_QA_CALLS: calls }, stdout: "inherit", stderr: "inherit", stdin: "ignore", windowsHide: true });
     process.exitCode = await child.exited;
   } finally { rmSync(root, { recursive: true, force: true }); }
   process.exit(process.exitCode);

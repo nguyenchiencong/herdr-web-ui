@@ -101,7 +101,7 @@ function installChromium(): string {
 async function buildDemo(dir: string): Promise<void> {
   console.log("[setup] Building demo app...");
   const started = Date.now();
-  const child = Bun.spawn(["bun", "scripts/demo-build.ts", dir], { cwd: repo, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["bun", "scripts/demo-build.ts", dir], { cwd: repo, stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   if (code !== 0) throw new Error(`Demo build failed:\n${stdout}\n${stderr}`);
   console.log(`[setup] Demo build completed in ${((Date.now() - started) / 1000).toFixed(1)}s`);
@@ -117,6 +117,7 @@ async function runScript(script: string, env: Record<string, string>, log: strin
       stdin: "ignore",
       stdout: fd,
       stderr: fd,
+      windowsHide: true,
     });
     // A hung script shows up as a repeated line instead of silence.
     const heartbeat = setInterval(() => {

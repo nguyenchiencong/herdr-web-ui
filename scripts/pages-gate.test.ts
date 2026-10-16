@@ -253,7 +253,7 @@ describe("Extracted UI checks", () => {
     // Given a unit run, no browser or herdr fixture is allowed.
     // When the shared helper is invoked directly, it must execute its entrypoint.
     const result = spawnSync(process.execPath, [fileURLToPath(new URL("./mobile-viewport-regression.ts", import.meta.url))], {
-      encoding: "utf8", timeout: 5_000,
+      encoding: "utf8", timeout: 5_000, windowsHide: true,
       env: { ...process.env, HERDR_TEST_MODE: "unit" },
     });
     // Then the unit-mode guard rejects the run rather than returning an empty success.
@@ -292,7 +292,7 @@ describe("Extracted UI checks", () => {
         const herdr = join(root, "herdr");
         writeFileSync(herdr, '#!/bin/sh\nprintf called > "$HERDR_GUARD_LOG"\nexit 1\n', { mode: 0o700 });
         const result = spawnSync(process.execPath, [fileURLToPath(new URL("./ui-contexts-regression.ts", import.meta.url))], {
-          encoding: "utf8", timeout: 5_000,
+          encoding: "utf8", timeout: 5_000, windowsHide: true,
           env: {
             ...process.env, TMPDIR: root, XDG_CONFIG_HOME: root,
             HERDR_WEB_HERDR_BIN: herdr, HERDR_GUARD_LOG: invoked,

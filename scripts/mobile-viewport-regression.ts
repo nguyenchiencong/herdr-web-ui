@@ -203,7 +203,7 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
 if (import.meta.main) {
   if (process.env.HERDR_TEST_MODE === "unit") throw new Error("HERDR_TEST_MODE=unit cannot run mobile viewport checks");
   const runner = Bun.spawn([process.execPath, join(import.meta.dir, "keyboard-viewport-demo-regression.ts")], {
-    stdin: "inherit", stdout: "inherit", stderr: "inherit",
+    stdin: "inherit", stdout: "inherit", stderr: "inherit", windowsHide: true,
   });
   process.exitCode = await runner.exited;
 }

@@ -49,7 +49,7 @@ it.skipIf(process.platform === "win32")("calls a socket file refused only once t
   try {
     const path = join(dir, "herdr.sock");
     expect(await refusedSocket(path)).toBe(false);
-    const listener = Bun.spawn([process.execPath, "-e", "Bun.listen({ unix: process.argv[1], socket: { data() {} } }); console.log('ready');", path], { stdout: "pipe", stderr: "inherit" });
+    const listener = Bun.spawn([process.execPath, "-e", "Bun.listen({ unix: process.argv[1], socket: { data() {} } }); console.log('ready');", path], { stdout: "pipe", stderr: "inherit", windowsHide: true });
     try {
       await listener.stdout.getReader().read();
       expect(await refusedSocket(path)).toBe(false);

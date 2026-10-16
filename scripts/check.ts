@@ -715,7 +715,7 @@ async function main(): Promise<void> {
         });
       };
       try {
-        const started = spawn(command[0]!, command.slice(1), { stdio: ["inherit", "pipe", "pipe"], env, cwd: commandCwd, detached: true });
+        const started = spawn(command[0]!, command.slice(1), { stdio: ["inherit", "pipe", "pipe"], env, cwd: commandCwd, detached: DETACH_STEPS, windowsHide: true });
         child = started;
         const times = { startedAt: startedAtMs, exitedAt: null as number | null };
         stepTimes.set(started, times);
@@ -810,7 +810,7 @@ async function main(): Promise<void> {
     if (todo.concurrent && code === 0 && !ending) {
       const herdr = process.env["HERDR_WEB_HERDR_BIN"] || "herdr";
       if (!Bun.which(herdr)) throw new Error("concurrent mode needs herdr on PATH (or HERDR_WEB_HERDR_BIN)");
-      const herdrVersion = spawnSync(herdr, ["--version"], { encoding: "utf8", env: process.env, timeout: 5_000 });
+      const herdrVersion = spawnSync(herdr, ["--version"], { encoding: "utf8", env: process.env, timeout: 5_000, windowsHide: true });
       const herdrVersionLine = herdrVersion.stdout?.trim().split(/\r?\n/, 1)[0] ?? "";
       report.toolchain.herdrVersion = herdrVersion.status === 0 && /^herdr\s+v?\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?$/i.test(herdrVersionLine)
         ? herdrVersionLine
@@ -825,7 +825,7 @@ async function main(): Promise<void> {
       saveReport();
       cleanups.push(() => {
         for (const session of existsSync(isolation.sessions) ? readdirSync(isolation.sessions) : []) {
-          spawnSync(herdr, ["--session", session, "server", "stop"], { env, stdio: "ignore", timeout: 10_000 });
+          spawnSync(herdr, ["--session", session, "server", "stop"], { env, stdio: "ignore", timeout: 10_000, windowsHide: true });
         }
       });
       console.log(`\ncheck: herdr session ${env["HERDR_TEST_SESSION"]}, config and state in ${resolve(isolation.sessions, "../../..")}`);
@@ -845,7 +845,7 @@ async function main(): Promise<void> {
       let unitLogsFailed = false;
       unitStdout.on("error", (error) => { unitLogsFailed = true; console.error(`check: unit stdout log failed: ${error.message}`); });
       unitStderr.on("error", (error) => { unitLogsFailed = true; console.error(`check: unit stderr log failed: ${error.message}`); });
-      const unit = spawn(bun, ["run", "test:unit"], { stdio: ["inherit", "pipe", "pipe"], env: plain, cwd, detached: true });
+      const unit = spawn(bun, ["run", "test:unit"], { stdio: ["inherit", "pipe", "pipe"], env: plain, cwd, detached: DETACH_STEPS, windowsHide: true });
       concurrentUnit = unit;
       const unitTimes = { startedAt: unitStartedAtMs, exitedAt: null as number | null };
       stepTimes.set(unit, unitTimes);
@@ -884,7 +884,7 @@ async function main(): Promise<void> {
     if (code === 0 && needsHerdr && !ending && !todo.concurrent) {
       const herdr = process.env["HERDR_WEB_HERDR_BIN"] || "herdr";
       if (!Bun.which(herdr)) throw new Error("this needs herdr on PATH (or HERDR_WEB_HERDR_BIN)");
-      const herdrVersion = spawnSync(herdr, ["--version"], { encoding: "utf8", env: process.env, timeout: 5_000 });
+      const herdrVersion = spawnSync(herdr, ["--version"], { encoding: "utf8", env: process.env, timeout: 5_000, windowsHide: true });
       const herdrVersionLine = herdrVersion.stdout?.trim().split(/\r?\n/, 1)[0] ?? "";
       report.toolchain.herdrVersion = herdrVersion.status === 0 && /^herdr\s+v?\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?$/i.test(herdrVersionLine)
         ? herdrVersionLine
@@ -900,7 +900,7 @@ async function main(): Promise<void> {
       // every session in the run's own config directory is the run's: the browser scripts leave theirs running
       cleanups.push(() => {
         for (const session of existsSync(isolation.sessions) ? readdirSync(isolation.sessions) : []) {
-          spawnSync(herdr, ["--session", session, "server", "stop"], { env, stdio: "ignore", timeout: 10_000 });
+          spawnSync(herdr, ["--session", session, "server", "stop"], { env, stdio: "ignore", timeout: 10_000, windowsHide: true });
         }
       });
       console.log(`\ncheck: herdr session ${env["HERDR_TEST_SESSION"]}, config and state in ${resolve(isolation.sessions, "../../..")}`);
@@ -956,6 +956,13 @@ async function main(): Promise<void> {
   }
   process.exit(code);
 }
+
+/**
+ * POSIX steps lead a process group, which endGroup signals. A Windows step is not detached: a detached child has no
+ * console, so each console program it starts opens one of its own, which Windows Terminal shows as a tab. The step
+ * gets a hidden console instead (windowsHide), and its programs inherit it.
+ */
+const DETACH_STEPS = process.platform !== "win32";
 
 /** How long a step's processes get to end after a signal before they are killed. */
 const END_GRACE_MS = 5_000;

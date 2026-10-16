@@ -28,7 +28,7 @@ async function run(command: string, extra: Record<string, string> = {}): Promise
   env[pathKey] = [bin, process.env[pathKey] ?? ""].join(delimiter);
   for (const key of ["HERDR_PLUGIN_CONFIG_DIR", "PORT", "HOST", "HERDR_WEB_TOKEN", "HERDR_WEB_STATE_DIR", "XDG_CONFIG_HOME"]) delete env[key];
   Object.assign(env, extra);
-  const child = Bun.spawn(["bun", "scripts/plugin.ts", command], { cwd: ROOT, env, stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["bun", "scripts/plugin.ts", command], { cwd: ROOT, env, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const [out, err, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { out, err, exitCode };
 }
@@ -266,7 +266,7 @@ describe("stop", () => {
     const managed = join(root, "server", "managed.ts");
     writeFileSync(managed, [
       'import { writeFileSync } from "node:fs";',
-      'const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "ignore", "ignore"] });',
+      'const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "ignore", "ignore"], windowsHide: true });',
       "writeFileSync(process.argv[2]!, String(child.pid));",
       "setInterval(() => {}, 1000);",
     ].join("\n"));

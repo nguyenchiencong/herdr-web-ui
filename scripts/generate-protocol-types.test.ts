@@ -12,7 +12,7 @@ const GENERATOR = join(ROOT, "scripts", "generate-protocol-types.ts");
 const GENERATED = join(ROOT, "shared", "herdr-api.generated.ts");
 
 async function runGenerator(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(["bun", "run", GENERATOR, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn(["bun", "run", GENERATOR, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;

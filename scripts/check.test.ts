@@ -120,7 +120,7 @@ describe("lock", () => {
 
   it("is free again once the run that held it is killed", async () => {
     const port = await freePort();
-    const holder = Bun.spawn([process.execPath, "-e", `const { lock } = await import(${JSON.stringify(fileURLToPath(new URL("./check.ts", import.meta.url)))}); await lock(${port}, 111, "/a"); console.log("HELD"); setInterval(() => {}, 1000);`], { stdout: "pipe" });
+    const holder = Bun.spawn([process.execPath, "-e", `const { lock } = await import(${JSON.stringify(fileURLToPath(new URL("./check.ts", import.meta.url)))}); await lock(${port}, 111, "/a"); console.log("HELD"); setInterval(() => {}, 1000);`], { stdout: "pipe", windowsHide: true });
     try {
       const reader = holder.stdout.getReader();
       let said = "";
@@ -350,7 +350,7 @@ describe("slots", () => {
   it("reclaims only a dead owner's marker and rolls back partial resource claims", async () => {
     const base = await freeRange(3);
     const dir = scratch();
-    const finished = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" });
+    const finished = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8", windowsHide: true });
     expect(finished.status).toBe(0);
     const marker = join(dir, ".check-lock");
     writeFileSync(marker, JSON.stringify({ pid: Number(finished.stdout.trim()), checkout: "/dead" }));
@@ -498,6 +498,7 @@ describe("check CLI", () => {
       env,
       encoding: "utf8",
       timeout: 30_000,
+      windowsHide: true,
     });
     git(cwd, "init", "-q", "nested");
     writeFileSync(join(cwd, "nested", "source.txt"), "nested repository fixture");

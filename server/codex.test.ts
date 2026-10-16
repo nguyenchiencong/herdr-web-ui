@@ -19,7 +19,7 @@ describe("a Codex process's own store", () => {
   it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("reads CODEX_HOME from the process's environment, and nothing from one without it", async () => {
     // not a system binary: macOS shows no environment of those (Codex is not one)
     const sleeper = (env: Record<string, string | undefined>) =>
-      Bun.spawn([process.execPath, "-e", "console.log('up'); await Bun.sleep(5000)"], { env, stdout: "pipe" });
+      Bun.spawn([process.execPath, "-e", "console.log('up'); await Bun.sleep(5000)"], { env, stdout: "pipe", windowsHide: true });
     // the stores are directories that are there: a value that names none is no store (macOS reads it from `ps`)
     const withHome = sleeper({ ...process.env, CODEX_HOME: tmpdir() });
     const without = sleeper(Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "CODEX_HOME")));
@@ -37,7 +37,7 @@ describe("a Codex process's own store", () => {
 
   it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("keeps a process's store under its pid and argv, and reads it again for other arguments", async () => {
     const home = mkdtempSync(join(tmpdir(), "herdr-codex-home-"));
-    const child = Bun.spawn([process.execPath, "-e", "console.log('up'); await Bun.sleep(5000)"], { env: { ...process.env, CODEX_HOME: home }, stdout: "pipe" });
+    const child = Bun.spawn([process.execPath, "-e", "console.log('up'); await Bun.sleep(5000)"], { env: { ...process.env, CODEX_HOME: home }, stdout: "pipe", windowsHide: true });
     try {
       await child.stdout.getReader().read();
       expect(await processCodexHome(child.pid, ["codex", "--first"])).toBe(home);

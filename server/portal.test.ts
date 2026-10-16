@@ -505,7 +505,7 @@ describe("running Portal", () => {
     const scriptPath = join(portalDir, "portal");
     writeFileSync(scriptPath, "await new Promise(() => {});\n");
     const unrelated = Bun.spawn([process.execPath, scriptPath, "expose", "--identity-path", identityPath], {
-      stdin: "ignore", stdout: "ignore", stderr: "ignore",
+      stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true,
     });
     writeFileSync(join(portalDir, "state.json"), JSON.stringify({ enabled: true, relay: RELAY, port: 7317, pid: unrelated.pid }));
     const service = new PortalService({ stateDir, fetch: relay() });

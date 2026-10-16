@@ -26,7 +26,7 @@ it("herdr loads the Phone setup entrypoint and keeps its QR and code visible in 
   const socket = join(config, "herdr", "sessions", session, "herdr.sock");
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HERDR_"))), XDG_CONFIG_HOME: config };
   const cli = async (...args: string[]) => {
-    const child = Bun.spawn([binary, ...args], { env, stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([binary, ...args], { env, stdout: "pipe", stderr: "pipe", windowsHide: true });
     const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     if (code !== 0) throw new Error(`herdr ${args.join(" ")}: ${err || out}`);
     return out.trim();
@@ -44,7 +44,7 @@ it("herdr loads the Phone setup entrypoint and keeps its QR and code visible in 
     await cli("plugin", "link", plugin);
     const pluginConfig = await cli("plugin", "config-dir", manifest.id);
     writeFileSync(join(pluginConfig, ".env"), `PORT=${app.port}\nHOST=127.0.0.1\nHERDR_WEB_TOKEN=\nHERDR_WEB_STATE_DIR=${join(root, "app-state")}\n`);
-    daemon = Bun.spawn([binary, "--session", session, "server"], { env, stdout: "ignore", stderr: "ignore" });
+    daemon = Bun.spawn([binary, "--session", session, "server"], { env, stdout: "ignore", stderr: "ignore", windowsHide: true });
     const deadline = Date.now() + 10_000;
     for (;;) {
       try { await herdrRpc("session.snapshot", {}, socket); break; }

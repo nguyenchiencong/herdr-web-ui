@@ -27,7 +27,7 @@ const herdr = process.env["HERDR_WEB_HERDR_BIN"] || Bun.which("herdr") || "herdr
 const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HERDR_"))), XDG_CONFIG_HOME: config };
 
 async function cli(...args: string[]): Promise<{ code: number; output: string }> {
-  const proc = Bun.spawn([herdr, "--session", SESSION, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env });
+  const proc = Bun.spawn([herdr, "--session", SESSION, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env, windowsHide: true });
   const [code, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   return { code, output: `${stdout}${stderr}`.trim() };
 }
@@ -60,7 +60,7 @@ async function startSession(): Promise<void> {
   mkdirSync(dirname(socket), { recursive: true });
   const log = join(dirname(socket), "test-server.log");
   started = true;
-  const proc = Bun.spawn([herdr, "--session", SESSION, "server"], { stdin: "ignore", stdout: Bun.file(log), stderr: Bun.file(log), env });
+  const proc = Bun.spawn([herdr, "--session", SESSION, "server"], { stdin: "ignore", stdout: Bun.file(log), stderr: Bun.file(log), env, windowsHide: true });
   serverPid = proc.pid;
   proc.unref();
   try {

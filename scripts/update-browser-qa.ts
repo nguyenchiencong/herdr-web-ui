@@ -47,7 +47,7 @@ try {
   const port = reserve.port!; reserve.stop(true);
   const origin = `http://127.0.0.1:${port}`;
   supervisor = Bun.spawn([process.execPath, "server/managed.ts"], {
-    cwd: install, stdout: log, stderr: log,
+    cwd: install, stdout: log, stderr: log, windowsHide: true,
     env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), HERDR_WEB_TOKEN: "",
       HERDR_WEB_AUTO_UPDATE: "0", HERDR_WEB_TELEMETRY: "0", HERDR_WEB_STATE_DIR: join(temp, "state") },
   });

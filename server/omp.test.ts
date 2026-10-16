@@ -133,7 +133,7 @@ describe("an omp pane's chat", () => {
     mkdirSync(bin);
     const script = join(bin, "omp.js");
     writeFileSync(script, `require("node:fs").openSync(${JSON.stringify(path)}, "a"); console.log("ready"); setInterval(() => {}, 1000);`);
-    const child = Bun.spawn([process.execPath, script], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+    const child = Bun.spawn([process.execPath, script], { stdout: "pipe", stderr: "ignore", stdin: "ignore", windowsHide: true });
     try {
       const reader = child.stdout.getReader();
       const first = await Promise.race([

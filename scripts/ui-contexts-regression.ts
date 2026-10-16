@@ -36,7 +36,7 @@ stopEnv.XDG_CONFIG_HOME = configRoot;
 let stopped = false;
 try {
   const result = Bun.spawnSync([herdr, "--session", session, "server", "stop"], {
-    env: stopEnv, timeout: 10_000, stdout: "inherit", stderr: "inherit",
+    env: stopEnv, timeout: 10_000, stdout: "inherit", stderr: "inherit", windowsHide: true,
   });
   stopped = result.exitCode === 0;
   if (stopped) {

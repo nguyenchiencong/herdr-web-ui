@@ -27,7 +27,7 @@ let child: ReturnType<typeof Bun.spawn> | undefined;
 try {
   const archive = resolve(`remote-bundles/herdr-web-ui-${process.platform}-${process.arch}.tgz`);
   assert.equal(Bun.spawnSync(["tar", "xzf", archive, "-C", bundle]).exitCode, 0);
-  child = Bun.spawn([bun, join(bundle, "server/remote-entry.ts")], { env, stdout: "inherit", stderr: "inherit" });
+  child = Bun.spawn([bun, join(bundle, "server/remote-entry.ts")], { env, stdout: "inherit", stderr: "inherit", windowsHide: true });
   const { createHash } = await import("node:crypto");
   const socket = join(xdg, "herdr/sessions/smoke/herdr.sock");
   const described = join(home, ".config/herdr-web-ui/bridges", createHash("sha256").update(socket).digest("hex") + ".json");
@@ -77,7 +77,7 @@ try {
   }
 } finally {
   child?.kill(); if (child) await child.exited;
-  Bun.spawnSync([herdr, "--session", "smoke", "server", "stop"], { env });
+  Bun.spawnSync([herdr, "--session", "smoke", "server", "stop"], { env, windowsHide: true });
   // Windows keeps the directory busy for a moment after the daemon lets go of its files
   for (let i = 0; ; i++) {
     try { rmSync(root, { recursive: true, force: true }); break; } catch (error) {

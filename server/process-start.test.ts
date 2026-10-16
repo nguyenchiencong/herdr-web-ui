@@ -11,7 +11,7 @@ describe("process start time", () => {
   });
 
   it("tells when a running process started, to the second", async () => {
-    const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(5000)"]);
+    const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(5000)"], { windowsHide: true });
     try {
       const started = processStartedAt(child.pid);
       expect(started).not.toBeNull();

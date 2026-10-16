@@ -229,7 +229,7 @@ async function loadSchema(refresh: boolean): Promise<Json> {
   if (refresh) {
     // the same binary the tests and the server use, so a schema can come from a herdr that is not installed
     const herdr = process.env["HERDR_WEB_HERDR_BIN"] || "herdr";
-    const proc = Bun.spawn([herdr, "api", "schema", "--json"], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn([herdr, "api", "schema", "--json"], { stdout: "pipe", stderr: "pipe", windowsHide: true });
     const text = await new Response(proc.stdout).text();
     if ((await proc.exited) !== 0) throw new Error("herdr api schema --json failed");
     writeFileSync(SCHEMA_PATH, text);

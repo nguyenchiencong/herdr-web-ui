@@ -57,7 +57,7 @@ if (suite === "unit") {
       const fileStartedAt = Date.now();
       const child = Bun.spawn(["sh", "-c", 'exec "$@" 2>&1', "sh", process.execPath, "test", "--timeout", "60000", `./${file}`], {
         env: { ...process.env, HERDR_TEST_MODE: suite! },
-        stdin: "ignore", stdout: "pipe", stderr: "inherit",
+        stdin: "ignore", stdout: "pipe", stderr: "inherit", windowsHide: true,
       });
       const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
       const plain = output.replace(/\x1b\[[0-9;]*m/g, "");
@@ -100,7 +100,7 @@ async function work(session: string): Promise<void> {
     // nothing having failed, so the colour is stripped here rather than trusted away.
     const child = Bun.spawn(["sh", "-c", 'exec "$@" 2>&1', "sh", process.execPath, "test", "--timeout", "15000", `./${file}`], {
       env: { ...process.env, HERDR_TEST_MODE: suite!, HERDR_TEST_SESSION: session },
-      stdin: "ignore", stdout: "pipe", stderr: "inherit",
+      stdin: "ignore", stdout: "pipe", stderr: "inherit", windowsHide: true,
     });
     const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
     const plain = output.replace(/\x1b\[[0-9;]*m/g, "");
@@ -115,7 +115,7 @@ async function work(session: string): Promise<void> {
 
 await Promise.all(sessions.map(work));
 // The sessions `<session>-<n>` exist for this run only.
-await Promise.all(sessions.map((session) => Bun.spawn([herdr, "--session", session, "server", "stop"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited));
+await Promise.all(sessions.map((session) => Bun.spawn([herdr, "--session", session, "server", "stop"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true }).exited));
 console.log(`\nintegration: ${totals.pass} pass, ${totals.fail} fail, ${totals.skip} skip in ${selected.length} files, ${shards} at a time, ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
 for (const file of failed) console.log(`FAILED ${file}`);
 for (const file of unread) console.log(`NO RESULT ${file}`);

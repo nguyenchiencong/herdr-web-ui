@@ -314,7 +314,7 @@ describe("CLAUDE_CONFIG_DIR", () => {
     const dir = mkdtempSync(join(tmpdir(), "herdr-claude-env-"));
     // macOS hides system binaries' environments; use a started user process, as Claude is.
     const sleeper = (env: Record<string, string | undefined>) => Bun.spawn(
-      [process.execPath, "-e", "console.log('ready'); await Bun.sleep(5000)"], { env, stdout: "pipe" },
+      [process.execPath, "-e", "console.log('ready'); await Bun.sleep(5000)"], { env, stdout: "pipe", windowsHide: true },
     );
     const child = sleeper({ ...process.env, CLAUDE_CONFIG_DIR: dir });
     const bare = sleeper({ PATH: process.env["PATH"] ?? "" });

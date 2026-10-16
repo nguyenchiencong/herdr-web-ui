@@ -90,7 +90,7 @@ async function managedFixture(supervisor?: string, slowHealth = false) {
         `import {runManaged} from ${JSON.stringify(join(import.meta.dir, "managed.ts"))}; await runManaged(${JSON.stringify(root)});`], {
         env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", HERDR_WEB_STATE_DIR: stateDir,
           HERDR_WEB_TOKEN: "test-managed-token", HERDR_WEB_AUTO_UPDATE: "0", SUPERVISOR_MARKER: join(directory, "marker") },
-        stdout: output, stderr: output,
+        stdout: output, stderr: output, windowsHide: true,
       });
     } finally {
       closeSync(output);
