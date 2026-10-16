@@ -38,7 +38,8 @@ import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } f
 import nodePath, { type PlatformPath } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot, TurnSettings } from "../shared/protocol.ts";
-import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
+import { herdrRpc, paneRead } from "./herdr/client.ts";
+import { coalescedSessionSnapshot } from "./snapshot-cache.ts";
 import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
 import { AmbiguousClaudeStore, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
@@ -1342,7 +1343,7 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
 }
 
 async function omoTranscriptPath(paneId: string, cwd: string, panes?: HerdrPane[]): Promise<string> {
-  const session = await omoSessionForPane(paneId, cwd, panes ?? (await sessionSnapshot()).panes);
+  const session = await omoSessionForPane(paneId, cwd, panes ?? (await coalescedSessionSnapshot()).panes);
   if (session.pending !== null) throw new ConversationNotStarted(session.pending);
   if (!session.path) throw new ConversationUnavailable("no_session_path");
   return session.path;
@@ -1391,7 +1392,7 @@ export function devinSessionForPane(pane: HerdrPane, panes: HerdrPane[], argv: s
 
 /** Resolve the native live file or database session without reading conversation turns. */
 export async function paneTranscript(paneId: string, codexHome?: string, snapshot?: SessionSnapshot, devinDbPath?: string, opencodeDb?: string, hermesHome?: string, grokHome?: string): Promise<NativeTranscript> {
-  const panes = (snapshot ?? await sessionSnapshot()).panes;
+  const panes = (snapshot ?? await coalescedSessionSnapshot()).panes;
   const pane = panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined) throw new ConversationUnavailable("pane_not_found");
   if (typeof pane.cwd !== "string" || pane.cwd.length === 0) throw new ConversationUnavailable("no_recognized_transcript");
@@ -1432,7 +1433,7 @@ export async function paneTranscript(paneId: string, codexHome?: string, snapsho
  * `opencodeDb` is OpenCode's store, unset where OpenCode itself would find it.
  */
 export async function paneConversation(paneId: string, codexHome?: string, page: ConversationPage = {}, devinDbPath?: string, opencodeDb?: string, hermesHome?: string, grokHome?: string): Promise<RecognizedConversation> {
-  const snapshot = await sessionSnapshot();
+  const snapshot = await coalescedSessionSnapshot();
   let resolved: NativeTranscript;
 
   // no transcript states the model yet: the agent's own screen does (start-screen.ts). A screen
@@ -1625,7 +1626,7 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
  */
 export async function conversationImage(paneId: string, ref: string, codexHome?: string, opencodeDb?: string): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
   if (!IMAGE_REF.test(ref) && !CODEX_IMAGE_REF.test(ref) && !PI_IMAGE_REF.test(ref) && !OPENCODE_IMAGE_REF.test(ref)) return null;
-  const snapshot = await sessionSnapshot();
+  const snapshot = await coalescedSessionSnapshot();
   const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined || typeof pane.cwd !== "string" || pane.cwd.length === 0) return null;
   let resolved: ResolvedTranscript;
@@ -1671,7 +1672,7 @@ const TOOL_OUTPUT_MAX = 2_000_000;
 /** The whole output of a tool call whose page output was cut, by its id; null when there is none. */
 export async function toolOutput(paneId: string, ref: string, codexHome?: string, opencodeDb?: string, hermesHome?: string, grokHome?: string): Promise<string | null> {
   if (!TOOL_REF.test(ref)) return null;
-  const snapshot = await sessionSnapshot();
+  const snapshot = await coalescedSessionSnapshot();
   const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined || typeof pane.cwd !== "string" || pane.cwd.length === 0) return null;
   let resolved: ResolvedTranscript;

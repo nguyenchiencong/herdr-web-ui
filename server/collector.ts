@@ -86,6 +86,8 @@ export interface StatusCollectorHandlers {
   onReconciled?: (panes: readonly HerdrPane[]) => void;
   onPaneEnded: (paneId: string) => void;
   onStructureChange: () => void;
+  /** every event frame the collector receives, before it is read: a session snapshot shared with observers may be older than that frame */
+  onFrame?: () => void;
   /** herdr's focus moved onto this pane: whoever is at its terminal has it in front */
   onFocus?: (paneId: string) => void;
 }
@@ -311,6 +313,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
       paneIds.map((paneId) => ({ type: "pane.agent_status_changed", pane_id: paneId })),
       {
         onEvent: (frame) => {
+          handlers.onFrame?.();
           const parsed = parseStatusFrame(frame);
           if (!parsed) return;
           lastEventOf.set(parsed.paneId, ++statusEvents);
@@ -472,6 +475,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
     deps,
     [...STRUCTURE_SUBSCRIPTIONS],
     (frame) => {
+      handlers.onFrame?.();
       const parsed = parseStructureFrame(frame);
       if (!parsed) return;
       if (parsed.kind === "pane-ended") {
@@ -520,6 +524,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
       deps,
       [{ type: "pane.focused" }],
       (frame) => {
+        handlers.onFrame?.();
         const paneId = parseFocusFrame(frame);
         if (paneId === null) return;
         focusedAt.set(paneId, ++statusEvents);

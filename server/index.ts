@@ -25,6 +25,8 @@ import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import { ConversationMonitor } from "./conversation-monitor.ts";
 import { omoPanes } from "./omo.ts";
+import { stopProcessTableWorker } from "./windows-processes.ts";
+import { invalidateSessionSnapshots, observedSessionSnapshot } from "./snapshot-cache.ts";
 import { createGjcStatus, gjcPanes, readOmoSnapshot, reconcileProviderStatus } from "./gjc-status.ts";
 import { OMO_ALIASES, OmoStatus, processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
@@ -103,7 +105,7 @@ import { PendingInputs, PendingInputError, samePendingIdentity, type PendingIden
 import { processStartedAt } from "./process-start.ts";
 import { PendingRequestBook } from "./pending-requests.ts";
 import { interruptCodexSteering } from "./codex-steering.ts";
-import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, ReplayBuffer, wireBytes } from "./output-window.ts";
+import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, ReplayBuffer, outputChunk, ptyDataEnvelope, type OutputChunk } from "./output-window.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import { connectUpdater, handleUpdateRequest, type UpdateService } from "./update-api.ts";
 import { handleHerdrUpdateRequest, HerdrUpdater } from "./herdr-update.ts";
@@ -411,9 +413,14 @@ interface PaneAttachment {
 }
 
 function send(client: Client, message: ServerMessage): number {
+  return sendEncoded(client, () => JSON.stringify(message));
+}
+
+/** Sends one frame to a client, encoded by `encode` only while the client is open. */
+function sendEncoded(client: Client, encode: () => string): number {
   if (client.data.closing) return 0;
   try {
-    const encoded = JSON.stringify(message);
+    const encoded = encode();
     // Include JSON escaping in the transport budget, before Bun could drop a
     // frame at its own cap. An overload close is explicit and never auto-replayed.
     if (client.getBufferedAmount() + Buffer.byteLength(encoded) > OUTPUT_HARD_BYTES) {
@@ -1075,17 +1082,14 @@ export function createServer(
     else attachment.pty.resume();
   }
 
-  function sendOutput(client: Client, paneId: string, data: string): void {
+  function sendOutput(client: Client, paneId: string, chunk: OutputChunk): void {
     const window = client.data.output.get(paneId);
-    const bytes = Buffer.byteLength(data);
-    if ((window && window.pending + bytes > OUTPUT_HARD_BYTES) || client.getBufferedAmount() >= OUTPUT_HARD_BYTES) {
+    if ((window && window.pending + chunk.bytes > OUTPUT_HARD_BYTES) || client.getBufferedAmount() >= OUTPUT_HARD_BYTES) {
       stopSlowClient(client);
       return;
     }
-    send(client, {
-      type: "pty-data", pane_id: paneId, data,
-      ...(window ? { flow: { stream_id: window.id, offset: window.write(bytes, wireBytes(data)) } } : {}),
-    });
+    const flow = window ? { streamId: window.id, offset: window.write(chunk.bytes, chunk.wire) } : undefined;
+    sendEncoded(client, () => ptyDataEnvelope(paneId, chunk.quoted, flow));
   }
   const push = createPushService({
     stateDir: options.stateDir ?? defaultStateDir(),
@@ -1104,13 +1108,13 @@ export function createServer(
   /** OmO panes get their status from OmO's session files: herdr reports none for them (server/omo-status.ts) */
   const omo = new OmoStatus({
     discover: (panes) => omoPanes(panes),
-    snapshot: sessionSnapshot,
+    snapshot: () => observedSessionSnapshot(),
     onChange: (paneId, derived, background, turn, rest) => omoChanged(paneId, derived, background, turn, rest),
     // herdr called it `claude` or `pi` until now: what it finished under that name is its own
     // a wait another agent left is not OmO's; one OmO held before it was missed a while goes on
     onFound: (paneId, again) => { completions.adopt(paneId, "omo", OMO_ALIASES); if (!again) waits.forget(paneId); },
   });
-  const omoSnapshot = () => readOmoSnapshot(sessionSnapshot, omo);
+  const omoSnapshot = () => readOmoSnapshot(() => observedSessionSnapshot(), omo);
   /** GJC panes get their status from gjc's own transcript: herdr's `working` can be a provider child's (server/gjc-status.ts) */
   const gjc = createGjcStatus({
     discover: (panes) => gjcPanes(panes),
@@ -1156,9 +1160,9 @@ export function createServer(
     codexPath: async (pane) => codexOpenRollout(pane.pane_id, pane.cwd, await paneCodexHome(pane.pane_id, options.codexHome)),
     onChange: (paneId, summary) => planChanged(paneId, summary),
   });
-  /** herdr's snapshot with OmO's and GJC's own status in it: what the completion tracker and web push are given */
-  const rawSnapshot = async (): Promise<SessionSnapshot> => {
-    const snapshot = await omoSnapshot();
+  /** herdr's snapshot with OmO's and GJC's own status in it, read through `session`: what the completion tracker and web push are given */
+  const withStatus = (session: () => Promise<SessionSnapshot>) => async (): Promise<SessionSnapshot> => {
+    const snapshot = await readOmoSnapshot(session, omo);
     await gjc.refresh(snapshot.panes);
     const named = gjc.apply(omo.apply(snapshot));
     // not waited for: finding a transcript costs process calls, and a snapshot must not wait on them.
@@ -1166,13 +1170,17 @@ export function createServer(
     void claudeAgents.refresh(named.panes).catch(() => undefined).then(() => plans.refresh(named.panes)).catch(() => undefined);
     void piAgents.refresh(named.panes).catch(() => undefined);
     // an agent this server started has had no turn yet: its start screen is no work (launched-agents.ts)
-    for (const pane of named.panes) pane.agent_status = launchedAgents.settle(pane.pane_id, pane.agent_status);
-    return named;
+    // a copy per pane: an observer may share the snapshot this was read from, so it is not changed in place
+    return { ...named, panes: named.panes.map((pane) => ({ ...pane, agent_status: launchedAgents.settle(pane.pane_id, pane.agent_status) })) };
   };
+  /** what the status collector reconciles against: a fresh herdr read, so a reconcile never answers from an earlier snapshot */
+  const rawSnapshot = withStatus(() => sessionSnapshot());
+  /** what the 5 s roster loop reads: a finished read of the last second may answer it */
+  const observedRaw = withStatus(() => observedSessionSnapshot());
   const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId) || piAgents.countOf(paneId);
-  /** the snapshot clients get: finishes settled, OmO panes named, background tasks, waits and plan progress */
-  const clientSnapshot = async (): Promise<SessionSnapshot> => {
-    const snapshot = await completions.readSnapshot(rawSnapshot);
+  /** the snapshot a read gets: finishes settled, OmO panes named, background tasks, waits and plan progress */
+  const withClientView = (raw: () => Promise<SessionSnapshot>) => async (): Promise<SessionSnapshot> => {
+    const snapshot = await completions.readSnapshot(raw);
     if (!snapshot.panes.some((pane) => backgroundOf(pane.pane_id) > 0 || waits.waiting(pane.pane_id) || plans.summaryOf(pane.pane_id) !== null)) return snapshot;
     return {
       ...snapshot,
@@ -1184,10 +1192,14 @@ export function createServer(
       }),
     };
   };
+  /** what clients get: a fresh herdr read, as their request asked */
+  const clientSnapshot = withClientView(rawSnapshot);
+  /** the roster's local read, an observer's: a finished read of the last second may answer it */
+  const observerSnapshot = withClientView(observedRaw);
   /** A pane's status frame: every one says whether the pane waits on its turn's background work. */
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
     ({ type: "pane-status", pane_id: paneId, agent_status: status, ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
-  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot);
+  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, observerSnapshot);
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
   const bridgeToken = randomBytes(32).toString("hex");
 
@@ -1202,8 +1214,9 @@ export function createServer(
     for (const client of clients) send(client, message);
   }
 
-  async function terminalInfoFor(paneId: string, timeoutMs?: number): Promise<{ terminalId: string; rect: { width: number; height: number } | null }> {
-    const snapshot = await sessionSnapshot(undefined, timeoutMs);
+  // `observed` is the mirror's size check, which may take the shared read; an attach reads herdr directly
+  async function terminalInfoFor(paneId: string, timeoutMs?: number, observed = false): Promise<{ terminalId: string; rect: { width: number; height: number } | null }> {
+    const snapshot = observed ? await observedSessionSnapshot(timeoutMs) : await sessionSnapshot(undefined, timeoutMs);
     const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
     if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
     // herdr (0.9.3+) could not restore it after a restart: its terminal has no process
@@ -1311,7 +1324,7 @@ export function createServer(
         cols: spawnCols,
         rows: spawnRows,
         size: async () => {
-          const now = (await terminalInfoFor(paneId)).rect;
+          const now = (await terminalInfoFor(paneId, undefined, true)).rect;
           return now ? { cols: now.width, rows: now.height } : null;
         },
         // the grid follows herdr's layout: the clients adopt the new size before the screen
@@ -1325,7 +1338,8 @@ export function createServer(
         write: (data) => paneSendText(paneId, data),
         onData: (frame) => {
           if (attachments.get(paneId) !== attachment) return;
-          for (const client of attachment.clients) sendOutput(client, paneId, frame);
+          const chunk = outputChunk(frame);
+          for (const client of attachment.clients) sendOutput(client, paneId, chunk);
           reconcileOutput(paneId);
         },
         onExit: (code) => {
@@ -1350,7 +1364,8 @@ export function createServer(
     const forward = (data: string): void => {
       if (attachments.get(paneId) !== attachment) return;
       attachment.replay.append(data);
-      for (const client of attachment.clients) sendOutput(client, paneId, data);
+      const chunk = outputChunk(data);
+      for (const client of attachment.clients) sendOutput(client, paneId, chunk);
       reconcileOutput(paneId);
     };
     let retries = 0;
@@ -1718,6 +1733,8 @@ export function createServer(
   const bridgeAgents = machines ? null : bridgeAgentNews(() => broadcastAll({ type: "session-changed" }));
 
   const collector = startStatusCollector({
+    // every event frame the collector receives may have changed the session a shared read holds
+    onFrame: () => invalidateSessionSnapshots(),
     onStatus: (paneId, read, agent, replay) => {
       const raw = launchedAgents.settle(paneId, read);
       gjc.poll();
@@ -1785,7 +1802,11 @@ export function createServer(
     },
     // a pane created a moment ago got its agent after the roster's own read of it. After the
     // snapshot's replays: a roster read before them could show a finish ahead of its status frame
-    onReconciled: (panes) => { if (machines) machines.localAgents(panes); else bridgeAgents!.reconciled(panes); },
+    onReconciled: (panes) => {
+      // the roster's re-read below must not answer from a read older than this reconcile's
+      invalidateSessionSnapshots();
+      if (machines) machines.localAgents(panes); else bridgeAgents!.reconciled(panes);
+    },
     // the tracker first: what it makes of each pane (a finish after work is done, not idle) is
     // what the alerts are measured against from here, or the next event would alert of it
     onResync: (panes, newer) => {
@@ -3021,7 +3042,7 @@ export function createServer(
               const replay = attachment.mirror ? attachment.mirror.current ?? "" : attachment.replay.text();
               if (!alreadyAttached && replay) {
                 client.data.output.get(message.pane_id)?.join(replay, client.getBufferedAmount());
-                sendOutput(client, message.pane_id, replay);
+                sendOutput(client, message.pane_id, outputChunk(replay));
               }
               // a pane waiting for another web bridge to let go says so to each newcomer, too
               if (!alreadyAttached && attachment.held) send(client, { type: "error", code: "attach_held", message: ATTACH_HELD_MESSAGE, pane_id: message.pane_id });
@@ -3630,6 +3651,7 @@ export function createServer(
       collector.stop();
       omo.stop();
       gjc.stop();
+      stopProcessTableWorker();
       claudeAgents.stop();
       piAgents.stop();
       clearInterval(waitTimer);

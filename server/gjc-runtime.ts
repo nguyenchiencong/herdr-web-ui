@@ -10,7 +10,7 @@ import nodePath, { join, type PlatformPath } from "node:path";
 import { gjcSdkTranscript } from "./gjc-sdk.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import { processStartedAt } from "./process-start.ts";
-import { descendantArgv, windowsProcessTable, type ProcessRow } from "./windows-processes.ts";
+import { descendantArgv, polledProcessTable, type ProcessRow } from "./windows-processes.ts";
 
 export interface GjcTerminal { id: string; startedAt: number }
 
@@ -30,20 +30,60 @@ export function isGjcProcess(argv: readonly string[]): boolean {
 }
 
 const PROCESS_TABLE_MS = 5000;
-let processTable: { at: number; rows: Promise<ProcessRow[]> } | null = null;
+/**
+ * How long a pane's table is reused while its process key is unchanged. On Windows herdr names only the
+ * launcher, so a child started under a shell may leave the key as it was: this bounds how late it is seen.
+ */
+export const PANE_TABLE_MAX_MS = 10_000;
+
+/** A process table and when its read began: a shared read may have begun before the call that asks for it. */
+export interface ProcessTableRead { at: number; rows: ProcessRow[] }
+let processTable: { at: number; read: Promise<ProcessTableRead> } | null = null;
 
 /**
- * The Windows process table, read at most once per PROCESS_TABLE_MS. The chat polls a pane
- * every 2 s and each read starts a PowerShell (about 1.3 s on a real PC), so the polls of a
- * few seconds share one; a gjc that left its pane can still count as running for that long.
+ * The Windows process table with the time its read began, read at most once per PROCESS_TABLE_MS:
+ * the polls of a few seconds share one read. A gjc that left its pane can still count as running for
+ * that long.
  */
-export function recentProcessTable(read: () => Promise<ProcessRow[]> = windowsProcessTable, now = Date.now()): Promise<ProcessRow[]> {
-  if (processTable && now - processTable.at < PROCESS_TABLE_MS) return processTable.rows;
-  const entry = { at: now, rows: read() };
+export function recentProcessEntry(read: () => Promise<ProcessRow[]> = polledProcessTable, now = Date.now()): Promise<ProcessTableRead> {
+  if (processTable && now - processTable.at < PROCESS_TABLE_MS) return processTable.read;
+  const entry = { at: now, read: read().then((rows) => ({ at: now, rows })) };
   processTable = entry;
   // an empty table is a read that failed: the next poll asks again
-  void entry.rows.then((rows) => { if (rows.length === 0 && processTable === entry) processTable = null; });
-  return entry.rows;
+  void entry.read.then(({ rows }) => { if (rows.length === 0 && processTable === entry) processTable = null; });
+  return entry.read;
+}
+
+/** The rows of `recentProcessEntry`. */
+export function recentProcessTable(read: () => Promise<ProcessRow[]> = polledProcessTable, now = Date.now()): Promise<ProcessRow[]> {
+  return recentProcessEntry(read, now).then(({ rows }) => rows);
+}
+
+const paneTables = new Map<string, { key: string; at: number; rows: ProcessRow[] }>();
+
+/**
+ * The process table a pane's discovery reads. While the pane's process key (its shell and its foreground
+ * pids) is what the last read of this pane saw, and that read began under PANE_TABLE_MAX_MS ago, no read
+ * is asked for. An empty table is never kept.
+ */
+export async function paneProcessRows(
+  paneId: string,
+  key: string,
+  entry: () => Promise<ProcessTableRead> = () => recentProcessEntry(),
+  now = Date.now(),
+): Promise<ProcessRow[]> {
+  const seen = paneTables.get(paneId);
+  if (seen && seen.key === key && now - seen.at < PANE_TABLE_MAX_MS) return seen.rows;
+  const read = await entry();
+  if (read.rows.length > 0) paneTables.set(paneId, { key, at: read.at, rows: read.rows });
+  for (const [id, old] of paneTables) if (now - old.at >= PANE_TABLE_MAX_MS) paneTables.delete(id);
+  return read.rows;
+}
+
+/** Whether a table is held for the pane and still fresh; paneProcessRows reuses it only while the pane's process key is unchanged. */
+export function paneTableHeld(paneId: string, now = Date.now()): boolean {
+  const seen = paneTables.get(paneId);
+  return seen !== undefined && now - seen.at < PANE_TABLE_MAX_MS;
 }
 
 /** A gjc process by its number and when it started: a number alone comes back for another process. */
@@ -314,7 +354,7 @@ async function lookupGjcTranscript(
     "pane.process_info", { pane_id: id },
   ).catch(() => null));
   const sdkTranscript = options.sdkTranscript ?? gjcSdkTranscript;
-  const readProcessTable = options.readProcessTable ?? windowsProcessTable;
+  const readProcessTable = options.readProcessTable ?? polledProcessTable;
   const processBirth = options.processBirth ?? processStartedAt;
   // macOS reads a start as now minus whole elapsed seconds, so two reads of one process
   // differ by up to a second.

@@ -55,21 +55,25 @@ function nextId(): string {
 }
 
 /**
- * Splits a growing buffer into complete newline-terminated frames.
- * herdr frames arrive split across reads, so partial tails must be retained.
+ * Splits a growing stream into complete newline-terminated frames.
+ * herdr frames arrive split across reads, so partial tails must be retained. A read is scanned once,
+ * and a partial line is kept as pieces until its newline comes: a long answer costs time in proportion
+ * to its size, not to the square of it.
  */
-function makeLineReader(onLine: (line: string) => void): (chunk: Uint8Array) => void {
+export function makeLineReader(onLine: (line: string) => void): (chunk: Uint8Array) => void {
   const decoder = new TextDecoder();
-  let buffer = "";
+  let partial: string[] = [];
   return (chunk: Uint8Array) => {
-    buffer += decoder.decode(chunk, { stream: true });
-    let index = buffer.indexOf("\n");
-    while (index !== -1) {
-      const line = buffer.slice(0, index).trim();
-      buffer = buffer.slice(index + 1);
+    const text = decoder.decode(chunk, { stream: true });
+    let start = 0;
+    for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", start)) {
+      partial.push(text.slice(start, index));
+      const line = partial.join("").trim();
+      partial = [];
       if (line.length > 0) onLine(line);
-      index = buffer.indexOf("\n");
+      start = index + 1;
     }
+    if (start < text.length) partial.push(text.slice(start));
   };
 }
 
@@ -198,7 +202,24 @@ export async function ping(socketPath?: string): Promise<HerdrIdentity> {
   return { version: result.version, protocol: result.protocol, terminal_attach: attach, ...(attach ? {} : { terminal_mirror: true }) };
 }
 
+let directSessionReads = 0;
+
+/**
+ * How many session reads have been asked for outright (`sessionSnapshot`). A shared read begun before the
+ * latest of them is older than it, so snapshot-cache.ts answers no asker from one.
+ */
+export function directSessionReadCount(): number {
+  return directSessionReads;
+}
+
+/** The session as herdr has it now, read for one caller: counted as a direct read. */
 export async function sessionSnapshot(socketPath?: string, timeoutMs?: number): Promise<SessionSnapshot> {
+  directSessionReads += 1;
+  return readSessionSnapshot(socketPath, timeoutMs);
+}
+
+/** The session.snapshot read itself, for the shared reads of snapshot-cache.ts, which are not direct reads. */
+export async function readSessionSnapshot(socketPath?: string, timeoutMs?: number): Promise<SessionSnapshot> {
   const result = await herdrRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {}, socketPath, timeoutMs);
   return result.snapshot;
 }

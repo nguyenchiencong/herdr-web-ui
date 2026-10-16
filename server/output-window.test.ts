@@ -1,5 +1,22 @@
 import { describe, expect, it } from "bun:test";
-import { OutputWindow, OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_JOIN_BYTES_PER_SECOND, OUTPUT_JOIN_MAX_MS, OUTPUT_LOW_BYTES, OUTPUT_PAUSE_MAX_MS, OUTPUT_STALL_MS, ReplayBuffer, wireBytes } from "./output-window.ts";
+import { OutputWindow, OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_JOIN_BYTES_PER_SECOND, OUTPUT_JOIN_MAX_MS, OUTPUT_LOW_BYTES, OUTPUT_PAUSE_MAX_MS, OUTPUT_STALL_MS, ReplayBuffer, outputChunk, ptyDataEnvelope, wireBytes } from "./output-window.ts";
+
+describe("pty-data envelope", () => {
+  it("is byte-for-byte what JSON.stringify writes for the same frame, with and without flow", () => {
+    const control = String.fromCharCode(34, 92, 1, 27, 10, 13, 9, 0x2028, 0xd83d, 0xde00);
+    const texts = ["plain ascii", "中文 한국어 🙂", "", control, "lone " + String.fromCharCode(0xd83d) + " and " + String.fromCharCode(0xde00)];
+    for (const text of texts) {
+      const chunk = outputChunk(text);
+      expect(chunk.bytes).toBe(Buffer.byteLength(text));
+      expect(chunk.wire).toBe(wireBytes(text));
+      expect(chunk.quoted).toBe(JSON.stringify(text));
+      expect(ptyDataEnvelope("pane-1", chunk.quoted)).toBe(JSON.stringify({ type: "pty-data", pane_id: "pane-1", data: text }));
+      expect(ptyDataEnvelope("pane 2/é", chunk.quoted, { streamId: "7f3c-stream", offset: 12345 })).toBe(
+        JSON.stringify({ type: "pty-data", pane_id: "pane 2/é", data: text, flow: { stream_id: "7f3c-stream", offset: 12345 } }),
+      );
+    }
+  });
+});
 
 describe("terminal output credit", () => {
   it("holds high-water backpressure until the low watermark, without duplicate credit", () => {
@@ -268,5 +285,140 @@ describe("terminal output credit", () => {
     expect(replay.text()).toBe("");
     replay.append("\x1b[?1049h\x1b[?1000hhello");
     expect(replay.text()).toBe("\x1b[?1049h\x1b[?1000hhello");
+  });
+});
+
+/** The cut ReplayBuffer made on every append before it was amortized: the reference its output must match. */
+class CutOnEveryAppend {
+  private tail = "";
+  private readonly modes = new Map<string, "h" | "l">();
+  private modifyOtherKeys = 0;
+
+  constructor(private readonly limit: number) {}
+
+  append(data: string): void {
+    const bytes = Buffer.from(this.tail + data);
+    let start = Math.max(0, bytes.length - this.limit);
+    while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start++;
+    const escape = start > 0 ? bytes.lastIndexOf(0x1b, start - 1) : -1;
+    if (escape >= 0 && /^\x1b(\[[\x30-\x3f]*[\x20-\x2f]*)?$/.test(bytes.subarray(escape, start).toString("latin1"))) start = escape;
+    if (start === 0) {
+      this.tail += data;
+      return;
+    }
+    const cut = bytes.subarray(0, start).toString("utf8");
+    for (const [, params, state] of cut.matchAll(/\x1b\[\?([\d;]+)([hl])/g)) {
+      for (const mode of params!.split(";").filter(Boolean)) {
+        this.modes.delete(mode);
+        this.modes.set(mode, state as "h" | "l");
+      }
+    }
+    for (const [, resource, level, final] of cut.matchAll(/\x1b\[>(4(?:;(\d*))?)?([mn])/g)) this.modifyOtherKeys = resource && final === "m" ? Number(level || 0) : 0;
+    this.tail = bytes.subarray(start).toString("utf8");
+  }
+
+  text(): string {
+    if (!this.tail) return "";
+    const keys = this.modifyOtherKeys > 0 ? `\x1b[>4;${this.modifyOtherKeys}m` : "";
+    return [...this.modes].map(([mode, state]) => `\x1b[?${mode}${state}`).join("") + keys + this.tail;
+  }
+
+  get recent(): string {
+    return this.tail;
+  }
+}
+
+/** A seeded generator, so a failing stream can be replayed exactly. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Whole code points and escape fragments, so any run of them is a valid stream whatever the chunking. */
+const PIECES = [
+  "a", "bc", " ", "\n", "x".repeat(7), "시작", "🙂", "é", "中文",
+  "\x1b[31m", "\x1b[0m", "\x1b[?1049h", "\x1b[?1049l", "\x1b[?1006h", "\x1b[?1006l", "\x1b[?1000h",
+  "\x1b[?1016l", "\x1b[?1002;1006h", "\x1b[?25l", "\x1b[>4;2m", "\x1b[>4;0m", "\x1b[>4m", "\x1b[>m", "\x1b[>1;2m",
+  "\x1b[?", "\x1b[", "\x1b", "\x1b[12;3", "\x1b[" + "9".repeat(40), "1049h", "25h", "1006;2008l", "m", "h", "l", "\x1b[>4",
+];
+
+/** One chunk of `pieces` random pieces: small chunks and chunks several limits long both occur. */
+function chunk(random: () => number, pieces: number): string {
+  let out = "";
+  for (let i = 0; i < pieces; i++) out += PIECES[Math.floor(random() * PIECES.length)]!;
+  return out;
+}
+
+describe("replay tail cut amortization", () => {
+  it("cuts exactly as cutting on every append does, for random chunks of every size", () => {
+    for (const limit of [1, 2, 3, 4, 7, 16, 33, 128, 1000]) {
+      for (let seed = 1; seed <= 4; seed++) {
+        const random = seeded(seed * 7919 + limit);
+        const replay = new ReplayBuffer(limit);
+        const reference = new CutOnEveryAppend(limit);
+        for (let step = 0; step < 400; step++) {
+          const data = chunk(random, 1 + Math.floor(random() * (random() < 0.1 ? 60 : 6)));
+          replay.append(data);
+          reference.append(data);
+          // observed on some steps only: text() cuts, and the cut must still line up with the deferred ones
+          if (random() < 0.2) {
+            expect(replay.text()).toBe(reference.text());
+            expect(replay.recent).toBe(reference.recent);
+          }
+        }
+        expect(replay.text()).toBe(reference.text());
+        expect(replay.recent).toBe(reference.recent);
+      }
+    }
+  });
+
+  it("matches cutting on every append for a 1 MiB chunk and for 64-byte chunks", () => {
+    const random = seeded(42);
+    let stream = "";
+    while (stream.length < 1024 * 1024) stream += chunk(random, 1 + Math.floor(random() * 40));
+    const big = new ReplayBuffer(128 * 1024);
+    big.append(stream);
+    const bigReference = new CutOnEveryAppend(128 * 1024);
+    bigReference.append(stream);
+    expect(big.text()).toBe(bigReference.text());
+
+    // 64-byte chunks cut at code point boundaries, against a smaller limit so the reference stays fast
+    const small = new ReplayBuffer(8 * 1024);
+    const reference = new CutOnEveryAppend(8 * 1024);
+    let piece = "";
+    for (const codePoint of stream.slice(0, 512 * 1024)) {
+      piece += codePoint;
+      if (piece.length >= 64) {
+        small.append(piece);
+        reference.append(piece);
+        piece = "";
+      }
+    }
+    small.append(piece);
+    reference.append(piece);
+    expect(small.text()).toBe(reference.text());
+  });
+
+  it("keeps a surrogate pair split across two appends whole, as cutting on every append did", () => {
+    for (const limit of [4, 16, 1024]) {
+      const replay = new ReplayBuffer(limit);
+      const reference = new CutOnEveryAppend(limit);
+      for (const part of ["ab\uD83D", "\uDE00cd", "ef"]) {
+        replay.append(part);
+        reference.append(part);
+      }
+      expect(replay.text()).toBe(reference.text());
+    }
+    // with room to spare the pair is one 4-byte code point, not two replacement characters
+    const roomy = new ReplayBuffer(1024);
+    roomy.append("ab\uD83D");
+    roomy.append("\uDE00cd");
+    expect(roomy.text()).toBe("ab\uD83D\uDE00cd");
   });
 });

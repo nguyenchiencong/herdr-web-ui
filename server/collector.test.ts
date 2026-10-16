@@ -340,6 +340,29 @@ function recorder() {
   return { log, handlers };
 }
 
+describe("startStatusCollector frame notice", () => {
+  it("tells onFrame of every status and lifecycle frame before the handler that reads it", async () => {
+    const herdr = fakeHerdr([paneOf("w1:p1", "idle")]);
+    const { handlers } = recorder();
+    const order: string[] = [];
+    handlers.onFrame = () => order.push("frame");
+    handlers.onStatus = (paneId, status) => order.push(`status ${paneId}:${status}`);
+    const collector = startStatusCollector(handlers, herdr.deps);
+    try {
+      await tick();
+      herdr.status()!.start();
+      await tick(20);
+      order.length = 0;
+      herdr.status()!.emit(statusFrame("w1:p1", "working"));
+      expect(order).toEqual(["frame", "status w1:p1:working"]);
+      herdr.lifecycle().emit({ event: "pane_created", data: { type: "pane_created", pane_id: "w1:p2" } });
+      expect(order.filter((entry) => entry === "frame")).toHaveLength(2);
+    } finally {
+      collector.stop();
+    }
+  });
+});
+
 describe("startStatusCollector recovery", () => {
   it("snapshots again once the status subscription has started, without resyncing", async () => {
     const herdr = fakeHerdr([paneOf("w1:p1", "idle")]);

@@ -24,6 +24,28 @@ export function wireBytes(text: string): number {
   return Buffer.byteLength(JSON.stringify(text));
 }
 
+/** One chunk as the fan-out sends it: its UTF-8 size, its JSON string literal and that literal's size on the wire. */
+export interface OutputChunk {
+  bytes: number;
+  quoted: string;
+  wire: number;
+}
+
+/** A chunk prepared once, so each client's frame splices the same literal instead of encoding the text again. */
+export function outputChunk(text: string): OutputChunk {
+  const quoted = JSON.stringify(text);
+  return { bytes: Buffer.byteLength(text), quoted, wire: Buffer.byteLength(quoted) };
+}
+
+/**
+ * A `pty-data` frame as JSON.stringify writes its object, with the prepared literal spliced in: the
+ * same keys in the same order, so the bytes equal a plain encode of `{type, pane_id, data, flow?}`.
+ */
+export function ptyDataEnvelope(paneId: string, quoted: string, flow?: { streamId: string; offset: number }): string {
+  const meta = flow ? `,"flow":{"stream_id":${JSON.stringify(flow.streamId)},"offset":${flow.offset}}` : "";
+  return `{"type":"pty-data","pane_id":${JSON.stringify(paneId)},"data":${quoted}${meta}}`;
+}
+
 /** What the server does about one client: keep sending, pause the shared pty for it, or close it (4008). */
 export type OutputVerdict = "flow" | "pause" | "stop";
 
@@ -140,7 +162,13 @@ const INCOMPLETE_CSI = /^\x1b(\[[\x30-\x3f]*[\x20-\x2f]*)?$/;
  * request is passed on the same way, once: without it the joiner sends Ctrl+Enter as Enter.
  */
 export class ReplayBuffer {
+  /** the stream's last bytes as text, from the last cut on; `tailBytes` is their UTF-8 size */
   private tail = "";
+  private tailBytes = 0;
+  /** the high surrogate the tail ends with, if any: the next append's low surrogate completes it into one code point */
+  private trailing = "";
+  /** the tail size at which the next cut is due: another `limit` bytes past the last one */
+  private trimAt = 0;
   /**
    * Each mode's last switch in the output before the tail, in the order of those last
    * switches: order matters (1016l after 1006h leaves xterm's mouse encoding at the default).
@@ -151,19 +179,49 @@ export class ReplayBuffer {
 
   constructor(private readonly limit: number) {}
 
-  /** Keeps a bounded UTF-8 tail, never starting in the middle of a code point. */
+  /**
+   * Keeps a bounded UTF-8 tail, never starting in the middle of a code point. An append only grows
+   * the tail; it is cut back to `limit` bytes once it has grown by another `limit`, so a burst of
+   * small chunks does not re-encode the whole tail each time. `text()` and `recent` cut first, so
+   * they show what cutting on every append would have shown.
+   */
   append(data: string): void {
-    const bytes = Buffer.from(this.tail + data);
-    let start = Math.max(0, bytes.length - this.limit);
-    while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start++;
-    // never cut a control sequence in two: its switch would be lost to both halves
-    const escape = start > 0 ? bytes.lastIndexOf(0x1b, start - 1) : -1;
-    if (escape >= 0 && INCOMPLETE_CSI.test(bytes.subarray(escape, start).toString("latin1"))) start = escape;
-    if (start === 0) {
-      this.tail += data;
-      return;
+    if (!data) return;
+    // a high surrogate ending the tail and a low one starting `data` are one 4-byte code point
+    const joins = this.trailing !== "" && data.charCodeAt(0) >= 0xdc00 && data.charCodeAt(0) <= 0xdfff;
+    this.tailBytes += Buffer.byteLength(data) - (joins ? 2 : 0);
+    this.tail += data;
+    const last = data.charCodeAt(data.length - 1);
+    this.trailing = last >= 0xd800 && last <= 0xdbff ? data.slice(-1) : "";
+    if (this.tailBytes >= this.trimAt) this.trim();
+  }
+
+  /**
+   * Cuts the tail to its last `limit` bytes, moved back to a code point and never into a control
+   * sequence. A pending high surrogate is never cut: at the end it is encoded as U+FFFD (3 bytes),
+   * and it stays raw so that the next low surrogate still completes it.
+   */
+  private trim(): void {
+    if (this.tailBytes > this.limit) {
+      const bytes = Buffer.from(this.tail);
+      const end = this.trailing ? bytes.length - 3 : bytes.length;
+      let start = Math.min(end, bytes.length - this.limit);
+      while (start < end && (bytes[start]! & 0xc0) === 0x80) start++;
+      // never cut a control sequence in two: its switch would be lost to both halves
+      const escape = start > 0 ? bytes.lastIndexOf(0x1b, start - 1) : -1;
+      if (escape >= 0 && INCOMPLETE_CSI.test(bytes.subarray(escape, start).toString("latin1"))) start = escape;
+      if (start > 0) {
+        // the trackers match ASCII only, which a latin1 decode finds exactly as a utf8 one does, and cheaper
+        this.track(bytes.subarray(0, start).toString("latin1"));
+        this.tail = bytes.subarray(start, end).toString("utf8") + this.trailing;
+        this.tailBytes = bytes.length - start;
+      }
     }
-    const cut = bytes.subarray(0, start).toString("utf8");
+    this.trimAt = this.tailBytes + this.limit;
+  }
+
+  /** Feeds the bytes leaving the tail through the mode and modifyOtherKeys trackers, in stream order. */
+  private track(cut: string): void {
     for (const [, params, state] of cut.matchAll(PRIVATE_MODES)) {
       for (const mode of params!.split(";").filter(Boolean)) {
         this.modes.delete(mode);
@@ -171,11 +229,11 @@ export class ReplayBuffer {
       }
     }
     for (const [, resource, level, final] of cut.matchAll(MODIFY_OTHER_KEYS)) this.modifyOtherKeys = resource && final === "m" ? Number(level || 0) : 0;
-    this.tail = bytes.subarray(start).toString("utf8");
   }
 
   /** The stream as seen by a client joining now. Empty until the pane has written anything. */
   text(): string {
+    this.trim();
     if (!this.tail) return "";
     const keys = this.modifyOtherKeys > 0 ? `\x1b[>4;${this.modifyOtherKeys}m` : "";
     return [...this.modes].map(([mode, state]) => `\x1b[?${mode}${state}`).join("") + keys + this.tail;
@@ -183,6 +241,7 @@ export class ReplayBuffer {
 
   /** The raw tail, for matching herdr's own error text. */
   get recent(): string {
+    this.trim();
     return this.tail;
   }
 }

@@ -6,6 +6,7 @@ import type { HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 
 import { forgetTranscriptState, paneConversation } from "./conversation.ts";
 import * as herdr from "./herdr/client.ts";
+import { invalidateSessionSnapshots } from "./snapshot-cache.ts";
 import { terminalBreadcrumb } from "./gjc-runtime.ts";
 import { isOmpProcess, ompAgentDir } from "./omp.ts";
 
@@ -81,13 +82,14 @@ describe("an omp pane's chat", () => {
     const cwd = join(home, "project");
     mkdirSync(cwd);
     pane = { pane_id: "pane-omp", cwd, foreground_cwd: cwd, agent: "omp" } as HerdrPane;
-    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane] } as SessionSnapshot));
+    invalidateSessionSnapshots();
+    const snapshot = spyOn(herdr, "readSessionSnapshot").mockImplementation(async () => ({ panes: [pane] } as SessionSnapshot));
     const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => {
       if (method === "agent.get") return { agent: { agent_session: agentSession } } as never;
       if (method === "pane.process_info") return { process_info: { foreground_processes: processes } } as never;
       throw new Error(`unexpected RPC: ${method}`);
     });
-    restores.push(() => snapshot.mockRestore(), () => rpc.mockRestore());
+    restores.push(() => snapshot.mockRestore(), () => rpc.mockRestore(), invalidateSessionSnapshots);
   });
   afterEach(() => {
     for (const restore of restores.splice(0)) restore();

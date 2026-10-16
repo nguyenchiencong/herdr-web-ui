@@ -11,6 +11,7 @@ import { parseAgyTranscript } from "./agy.ts";
 import { agyStoreFromLocks } from "./agy-store.ts";
 import * as agyStore from "./agy-store.ts";
 import * as herdr from "./herdr/client.ts";
+import { invalidateSessionSnapshots } from "./snapshot-cache.ts";
 import { forgetHistoryChains } from "./codex.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import * as omo from "./omo.ts";
@@ -27,8 +28,10 @@ describe("Devin pane identity", () => {
       return { process_info: { foreground_processes: mockedProcesses } } as never;
     });
     restores.push(() => rpc.mockRestore());
-    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: mockedPanes } as SessionSnapshot));
-    restores.push(() => snapshot.mockRestore());
+    // Conversations read through the coalesced snapshot cache, which sits over readSessionSnapshot.
+    invalidateSessionSnapshots();
+    const snapshot = spyOn(herdr, "readSessionSnapshot").mockImplementation(async () => ({ panes: mockedPanes } as SessionSnapshot));
+    restores.push(() => snapshot.mockRestore(), invalidateSessionSnapshots);
   });
   afterEach(() => {
     for (const restore of restores.splice(0)) restore();

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, 
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { forgetTranscriptState } from "./conversation.ts";
-import { gjcPidUnderShell, gjcSessionFile, gjcTranscriptForPane, isGjcProcess, parseGjcPs, recentProcessTable, storeRelative, terminalBreadcrumb, validateGjcSdkTranscript } from "./gjc-runtime.ts";
+import { gjcPidUnderShell, gjcSessionFile, gjcTranscriptForPane, isGjcProcess, paneProcessRows, parseGjcPs, recentProcessTable, storeRelative, terminalBreadcrumb, validateGjcSdkTranscript } from "./gjc-runtime.ts";
 
 // Session paths come back canonical and the store root is passed in canonical; macOS's tmpdir is a symlink into /private.
 const tempDir = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -354,6 +354,39 @@ it("uses a fresh Windows process tree for the final process identity check", asy
     expect(tableReads).toBe(2);
     expect(result).toBeNull();
   } finally { rmSync(home, { recursive: true, force: true }); forgetTranscriptState(); }
+});
+
+it("reads the process table for a pane again only when its key changed or its table is 10 s old", async () => {
+  const rows = [{ pid: 7, parent: 1, path: null, commandLine: "omo" }];
+  let clock = 0;
+  let reads = 0;
+  const entry = async () => {
+    reads += 1;
+    return { at: clock, rows };
+  };
+  expect(await paneProcessRows("pane-key-a", "100|", entry, 0)).toBe(rows);
+  clock = 5_000;
+  expect(await paneProcessRows("pane-key-a", "100|", entry, 5_000)).toBe(rows);
+  expect(reads).toBe(1);
+  clock = 6_000;
+  await paneProcessRows("pane-key-a", "100|7", entry, 6_000);
+  expect(reads).toBe(2);
+  clock = 16_000;
+  await paneProcessRows("pane-key-a", "100|7", entry, 16_000);
+  expect(reads).toBe(3);
+  await paneProcessRows("pane-key-b", "200|", entry, 16_000);
+  expect(reads).toBe(4);
+});
+
+it("never keeps an empty process table", async () => {
+  let reads = 0;
+  const empty = async () => {
+    reads += 1;
+    return { at: 0, rows: [] };
+  };
+  await paneProcessRows("pane-key-empty", "1|", empty, 0);
+  await paneProcessRows("pane-key-empty", "1|", empty, 1);
+  expect(reads).toBe(2);
 });
 
 it("asks the Windows process table once for the polls of a few seconds", async () => {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, setSystemTime } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
@@ -18,6 +18,69 @@ import { attachableIdentity, isRealNode, sidecarAvailable } from "./pty/sidecar.
 import { CompletionTracker } from "./completion.ts";
 import type { PushService } from "./push.ts";
 import { recentSshOutput } from "./ssh.ts";
+
+describe("roster and registry writes", () => {
+  it("sends a roster to a listener only when it changed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-roster-"));
+    const manager = new MachineManager(dir, {} as PushService, {} as CompletionTracker, async () => { throw new Error("local offline"); });
+    try {
+      const sent: string[] = [];
+      manager.subscribe((event) => {
+        if (event.type === "machines") sent.push(event.machines.map((machine) => machine.state).join(","));
+      });
+      const drive = manager as unknown as { emit(event?: unknown): void };
+      const subscribed = sent.length;
+      drive.emit();
+      drive.emit();
+      expect(sent.length).toBe(subscribed);
+      (manager.list()[0] as { state: string }).state = "reconnecting";
+      drive.emit();
+      expect(sent.length).toBe(subscribed + 1);
+      expect(sent.at(-1)).toContain("reconnecting");
+    } finally { manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("sends an unchanged roster again once a minute, so a browser copy that drifted is corrected", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-roster-resend-"));
+    const start = Date.parse("2026-10-16T09:00:00+07:00");
+    setSystemTime(new Date(start));
+    const manager = new MachineManager(dir, {} as PushService, {} as CompletionTracker, async () => { throw new Error("local offline"); });
+    try {
+      let sent = 0;
+      manager.subscribe((event) => {
+        if (event.type === "machines") sent++;
+      });
+      const drive = manager as unknown as { emit(event?: unknown): void };
+      const subscribed = sent;
+      setSystemTime(new Date(start + 59_000));
+      drive.emit();
+      expect(sent).toBe(subscribed);
+      setSystemTime(new Date(start + 60_000));
+      drive.emit();
+      expect(sent).toBe(subscribed + 1);
+      drive.emit();
+      expect(sent).toBe(subscribed + 1);
+    } finally { setSystemTime(); manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("writes the registry only when its content changed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-registry-"));
+    const manager = new MachineManager(dir, {} as PushService, {} as CompletionTracker, async () => { throw new Error("local offline"); });
+    try {
+      const drive = manager as unknown as { persist(): void; machines: Map<string, unknown>; runtime(machine: unknown): unknown };
+      const statePath = join(dir, "machines.json");
+      drive.persist();
+      expect(readFileSync(statePath, "utf8")).toBe("[]");
+      // the same registry is not written over what is there
+      writeFileSync(statePath, "sentinel");
+      drive.persist();
+      expect(readFileSync(statePath, "utf8")).toBe("sentinel");
+      drive.machines.set("office", drive.runtime({ id: "office", name: "Office", target: "office", enabled: true }));
+      drive.persist();
+      expect(readFileSync(statePath, "utf8")).toContain("Office");
+    } finally { manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
+});
 
 describe("independently managed bridge updates", () => {
   it("requires the owning app's update controls before installing a remote bundle", async () => {

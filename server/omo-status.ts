@@ -32,7 +32,8 @@
  * by turns, and a finish is matched by identity. A pane whose session cannot be told keeps
  * herdr's status, under the same identity.
  */
-import { closeSync, fstatSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync } from "node:fs";
+import { readdir as readdirAsync, readFile as readFileAsync, stat as statAsync } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { readOmoLines as readLines, type OmoLine } from "./omo-records.ts";
@@ -112,28 +113,115 @@ export function omoSessionId(path: string): string | null {
   return basename(path).match(/_([A-Za-z0-9-]{8,128})\.jsonl$/)?.[1] ?? null;
 }
 
+/** What one task record says to the count: its session when it is running, and its host process if it has one. */
+interface TaskCount { key: string; parent: string | null; hostPid: number | null }
+/**
+ * One tasks folder: the records of its last finished read, by file name, and the read running now. `at` is when the
+ * last read began and `asked` when the folder was last asked for; `known` is set once a read has finished, and until
+ * then the folder counts nothing it knows.
+ */
+interface TaskFolder { at: number; asked: number; known: boolean; tasks: Map<string, TaskCount>; inFlight: Promise<void> | null }
+const taskFolders = new Map<string, TaskFolder>();
+/** A folder is read again no sooner than this after a read began: once per poll. */
+const TASK_READ_MS = 1000;
+/** A folder nobody has asked for this long is dropped; its next ask starts afresh, its count unknown until read. */
+const TASK_FOLDER_IDLE_MS = 5 * 60_000;
+
 /**
  * How many background tasks each session of a folder has running: OmO keeps one record per
  * `task` child in the resolved senpi-task state's `tasks/`, with the session that started it.
  * Populated legacy project stores still win over the agent directory's `projects/<key>` store.
  * Pending and running records whose host process is gone are not counted.
+ *
+ * The answer is the folder's last finished read, so it is about a second old at most and never waits
+ * on the disk: a read runs in the background, one at a time per folder, and a parse happens only for
+ * a record whose size or time moved. A host's liveness is asked afresh on every call. `now` is when
+ * the call is made: a folder is due for its next read a second after one began, and is dropped once
+ * nobody asks for it for TASK_FOLDER_IDLE_MS. Until a read of the folder has finished the answer is
+ * undefined: an unread folder has no count, and a zero would be taken for a real one.
  */
-export function omoBackgroundTasks(cwd: string, alive: (pid: number) => boolean = processAlive, options: OmoStateOptions = {}): Map<string, number> {
-  const running = new Map<string, number>();
+export function omoBackgroundTasks(cwd: string, alive: (pid: number) => boolean = processAlive, options: OmoStateOptions = {}, now = Date.now()): Map<string, number> | undefined {
   let dir: string;
-  let names: string[];
   // a folder that cannot be resolved (permissions) counts nothing, and picks no other store
-  try { dir = join(omoStateDir(cwd, options), "tasks"); names = readdirSync(dir); } catch { return running; }
-  for (const name of names.slice(0, 2048)) {
-    if (!name.startsWith("st_") || !name.endsWith(".json")) continue;
-    try {
-      const record = JSON.parse(readFileSync(join(dir, name), "utf8")) as { status?: unknown; parent_session_id?: unknown; host_pid?: unknown };
-      if (typeof record.status !== "string" || !OMO_RUNNING.has(record.status) || typeof record.parent_session_id !== "string") continue;
-      if (typeof record.host_pid === "number" && !alive(record.host_pid)) continue;
-      running.set(record.parent_session_id, (running.get(record.parent_session_id) ?? 0) + 1);
-    } catch { /* being written, or not a record */ }
+  try { dir = join(omoStateDir(cwd, options), "tasks"); } catch { return new Map(); }
+  const folder = taskFolder(dir, now);
+  if (folder.inFlight === null && now - folder.at >= TASK_READ_MS) startTaskRead(dir, folder, now);
+  if (!folder.known) return undefined;
+  const running = new Map<string, number>();
+  for (const task of folder.tasks.values()) {
+    if (task.parent !== null && (task.hostPid === null || alive(task.hostPid))) running.set(task.parent, (running.get(task.parent) ?? 0) + 1);
   }
   return running;
+}
+
+/**
+ * Reads a folder's records once more, after any read already running: resolves when a read that began after this call
+ * has finished, so the count then answers for everything written before the call.
+ */
+export async function readOmoBackgroundTasks(cwd: string, options: OmoStateOptions = {}): Promise<void> {
+  let dir: string;
+  try { dir = join(omoStateDir(cwd, options), "tasks"); } catch { return; }
+  const now = Date.now();
+  await startTaskRead(dir, taskFolder(dir, now), now);
+}
+
+/** The folder for `dir`, asked for now. Folders nobody has asked for in TASK_FOLDER_IDLE_MS, and with no read running, are dropped first. */
+function taskFolder(dir: string, now: number): TaskFolder {
+  for (const [key, idle] of taskFolders) {
+    if (idle.inFlight === null && now - idle.asked >= TASK_FOLDER_IDLE_MS) taskFolders.delete(key);
+  }
+  let folder = taskFolders.get(dir);
+  if (!folder) {
+    folder = { at: 0, asked: now, known: false, tasks: new Map(), inFlight: null };
+    taskFolders.set(dir, folder);
+  }
+  folder.asked = now;
+  return folder;
+}
+
+/** Starts a read of the folder at `now`, after the read running if any, and makes it the one running: resolves when it has counted. */
+function startTaskRead(dir: string, folder: TaskFolder, now: number): Promise<void> {
+  folder.at = now;
+  const read: Promise<void> = (folder.inFlight ?? Promise.resolve())
+    .then(() => listTasks(dir, folder.tasks))
+    .then(
+      (tasks) => { folder.tasks = tasks; },
+      // a folder that cannot be listed counts nothing
+      () => { folder.tasks = new Map(); },
+    )
+    .finally(() => {
+      folder.known = true;
+      if (folder.inFlight === read) folder.inFlight = null;
+    });
+  folder.inFlight = read;
+  return read;
+}
+
+/** The folder's records as the count reads them: a record whose size and time are as `previous` saw it keeps its entry. */
+async function listTasks(dir: string, previous: Map<string, TaskCount>): Promise<Map<string, TaskCount>> {
+  const names = (await readdirAsync(dir)).slice(0, 2048);
+  const tasks = new Map<string, TaskCount>();
+  await Promise.all(names.filter((name) => name.startsWith("st_") && name.endsWith(".json")).map(async (name) => {
+    const path = join(dir, name);
+    let key: string;
+    try {
+      const stat = await statAsync(path);
+      key = `${stat.mtimeMs}:${stat.size}`;
+    } catch { return; } // removed since it was listed
+    const cached = previous.get(name);
+    tasks.set(name, cached?.key === key ? cached : await readTaskCount(path, key));
+  }));
+  return tasks;
+}
+
+/** A record as the count reads it: a record being written, or not a record, counts nothing. */
+async function readTaskCount(path: string, key: string): Promise<TaskCount> {
+  const none: TaskCount = { key, parent: null, hostPid: null };
+  try {
+    const record = JSON.parse(await readFileAsync(path, "utf8")) as { status?: unknown; parent_session_id?: unknown; host_pid?: unknown };
+    if (typeof record.status !== "string" || !OMO_RUNNING.has(record.status) || typeof record.parent_session_id !== "string") return none;
+    return { key, parent: record.parent_session_id, hostPid: typeof record.host_pid === "number" ? record.host_pid : null };
+  } catch { return none; }
 }
 
 export function processAlive(pid: number): boolean {
@@ -177,14 +265,20 @@ export interface OmoStatusDeps {
   /** a turn the process holding the file now could not have run is an interruption told as a failed rest (GJC); default: a plain rest (OmO) */
   staleIsFailure?: boolean;
   file?: OmoFile;
-  background?: (cwd: string) => Map<string, number>;
+  /** the background tasks of each session of a folder, by session id; undefined until a read of the folder has finished */
+  background?: (cwd: string) => Map<string, number> | undefined;
+  /**
+   * reads the folder again: resolves when a read that began after the call has finished. A turn's end waits for it, so a task
+   * started just before the end is counted. Default: readOmoBackgroundTasks, unless `background` is given, which then is taken as it stands.
+   */
+  backgroundRead?: (cwd: string) => Promise<void>;
   /** how often the session files are looked at, and the panes found anew */
   pollMs?: number;
   refreshMs?: number;
   now?: () => number;
 }
 
-interface Tracked extends OmoPane { cwd: string; sessionCwd?: string; offset: number; size: number; id: string; /** found again after a while herdr's status stood for it: a turn still running is told anew */ retell: boolean; turn: OmoTurn; status: OmoPaneStatus; /** at rest after an error, and when that error was written */ failed: boolean; failedAt: number | null; /** what is read now is the file's history, found anew: not written since it was being read */ history: boolean; background: number; /** the file could be opened at the last poll, and all it held was read to a record's end */ available: boolean; complete: boolean; /** a poll has considered this pane: a baseline it then read is nobody's news */ polled: boolean; /** the pane's own status stood for it at the last poll */ authoritative: boolean }
+interface Tracked extends OmoPane { cwd: string; sessionCwd?: string; offset: number; size: number; id: string; /** found again after a while herdr's status stood for it: a turn still running is told anew */ retell: boolean; turn: OmoTurn; status: OmoPaneStatus; /** at rest after an error, and when that error was written */ failed: boolean; failedAt: number | null; /** what is read now is the file's history, found anew: not written since it was being read */ history: boolean; background: number; /** the file could be opened at the last poll, and all it held was read to a record's end */ available: boolean; complete: boolean; /** a poll has considered this pane: a baseline it then read is nobody's news */ polled: boolean; /** the pane's own status stood for it at the last poll */ authoritative: boolean; /** a turn that ended is held until a count read after its end has finished: that read, and whether it has finished */ countRead: { done: boolean } | null }
 
 const FILES: OmoFile = {
   stat: (path) => { try { const fd = openSync(path, "r"); try { const stat = fstatSync(fd); return { size: stat.size, id: `${stat.dev}:${stat.ino}` }; } finally { closeSync(fd); } } catch { return null; } },
@@ -212,6 +306,7 @@ export class OmoStatus {
   private ticks = 0;
   private readonly file: OmoFile;
   private readonly background: NonNullable<OmoStatusDeps["background"]>;
+  private readonly backgroundRead: NonNullable<OmoStatusDeps["backgroundRead"]> | undefined;
   private readonly now: () => number;
   private readonly refreshMs: number;
   private readonly agent: string;
@@ -223,6 +318,7 @@ export class OmoStatus {
   constructor(private readonly deps: OmoStatusDeps) {
     this.file = deps.file ?? FILES;
     this.background = deps.background ?? omoBackgroundTasks;
+    this.backgroundRead = deps.backgroundRead ?? (deps.background ? undefined : readOmoBackgroundTasks);
     this.now = deps.now ?? Date.now;
     this.refreshMs = deps.refreshMs ?? 5000;
     this.agent = deps.agent ?? "omo";
@@ -312,7 +408,7 @@ export class OmoStatus {
           const startedAt = pane.startedAt ?? before?.startedAt ?? (prior?.path === pane.path ? prior.startedAt : null);
           // an error the pane rested on is the same session's alone: another one's answers finish nothing of it
           const same = prior !== undefined && prior.path === pane.path;
-          this.panes.set(paneId, { ...pane, startedAt, cwd: cwds.get(paneId) ?? "", offset: -1, size: -1, id: "", retell: prior !== undefined, turn: noTurn(), status: prior?.status ?? "idle", failed: same && prior.failed, failedAt: same ? prior.failedAt : null, history: false, background: prior?.background ?? 0, available: false, complete: false, polled: this.deps.ready !== undefined && (before?.polled === true || prior !== undefined), authoritative: false });
+          this.panes.set(paneId, { ...pane, startedAt, cwd: cwds.get(paneId) ?? "", offset: -1, size: -1, id: "", retell: prior !== undefined, turn: noTurn(), status: prior?.status ?? "idle", failed: same && prior.failed, failedAt: same ? prior.failedAt : null, history: false, background: prior?.background ?? 0, available: false, complete: false, polled: this.deps.ready !== undefined && (before?.polled === true || prior !== undefined), authoritative: false, countRead: null });
         }
         if (pane.path !== null) this.last.delete(paneId);
       }
@@ -348,7 +444,7 @@ export class OmoStatus {
    * rest tells nobody; one found in a turn tells it, so that its end is a finish.
    */
   poll(): void {
-    const counts = new Map<string, Map<string, number>>();
+    const counts = new Map<string, Map<string, number> | undefined>();
     for (const [paneId, tracked] of this.panes) {
       if (tracked.path === null) { this.noteAuthority(tracked); continue; }
       const stat = this.file.stat(tracked.path);
@@ -369,7 +465,22 @@ export class OmoStatus {
       const sessionId = omoSessionId(tracked.path);
       const cwd = tracked.sessionCwd ?? tracked.cwd;
       if (!counts.has(cwd)) counts.set(cwd, cwd ? this.background(cwd) : new Map());
-      const background = sessionId ? counts.get(cwd)!.get(sessionId) ?? 0 : 0;
+      const folder = counts.get(cwd);
+      // a folder no read of which has finished says nothing yet: its panes wait for their count, a zero would be a false one
+      if (folder === undefined) { this.noteAuthority(tracked); continue; }
+      // a turn's end is told once a count read that began after it has finished, so a task started just before the end is counted
+      if (tracked.countRead !== null && status !== "idle") tracked.countRead = null;
+      if (status === "idle" && tracked.status === "working" && tracked.countRead === null && this.backgroundRead) {
+        const read = { done: false };
+        tracked.countRead = read;
+        const finished = () => { read.done = true; this.poll(); };
+        void this.backgroundRead(cwd).then(finished, finished);
+      }
+      if (tracked.countRead !== null) {
+        if (!tracked.countRead.done) { this.noteAuthority(tracked); continue; }
+        tracked.countRead = null;
+      }
+      const background = sessionId ? folder.get(sessionId) ?? 0 : 0;
       const failed = status === "idle" && (tracked.turn.failed === true || (this.staleIsFailure && stale));
       // an answer written after the error that ended the turn (a retry's, or one to a new prompt):
       // the pane worked meanwhile, though it read READY, and this rest is the finish of that work.

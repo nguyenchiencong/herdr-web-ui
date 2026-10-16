@@ -8,7 +8,7 @@ import { CompletionTracker, type OmoRest } from "./completion.ts";
 import { paneAfterStatus } from "./machines.ts";
 import { earliestStart, holderStartedAt } from "./omo.ts";
 import { projectStateKey } from "./omo-state-dir.ts";
-import { noTurn, OMO_ALIASES, omoBackgroundTasks, omoSessionId, OmoStatus, omoTurnAfter, omoTurnStatus, readLines, type OmoLine, type OmoPane } from "./omo-status.ts";
+import { noTurn, OMO_ALIASES, omoBackgroundTasks, omoSessionId, OmoStatus, omoTurnAfter, omoTurnStatus, readLines, readOmoBackgroundTasks, type OmoLine, type OmoPane } from "./omo-status.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-omo-status-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -102,7 +102,7 @@ describe("an OmO turn, read from its session file", () => {
     expect(omoSessionId(path)).toBe("01a0f88b-481c-7139-8125-c9cd453b9e17");
   });
 
-  it("counts each session's running background tasks, not a dead host's", () => {
+  it("counts each session's running background tasks, not a dead host's", async () => {
     const cwd = join(root, "project");
     const tasks = join(cwd, ".omo", "senpi-task", "tasks");
     mkdirSync(tasks, { recursive: true });
@@ -113,11 +113,13 @@ describe("an OmO turn, read from its session file", () => {
     task("st_4.json", { task_id: "st_4", status: "running", parent_session_id: "mine", host_pid: 99 });
     task("st_5.json", { task_id: "st_5", status: "pending", parent_session_id: "mine" });
     writeFileSync(join(tasks, "st_6.json"), "{half");
-    expect(Object.fromEntries(omoBackgroundTasks(cwd, (pid) => pid === 10))).toEqual({ mine: 2, other: 1 });
-    expect(omoBackgroundTasks(join(root, "nowhere"), () => true, { env: {}, home: root }).size).toBe(0);
+    await readOmoBackgroundTasks(cwd);
+    expect(Object.fromEntries(omoBackgroundTasks(cwd, (pid) => pid === 10)!)).toEqual({ mine: 2, other: 1 });
+    await readOmoBackgroundTasks(join(root, "nowhere"), { env: {}, home: root });
+    expect(omoBackgroundTasks(join(root, "nowhere"), () => true, { env: {}, home: root })!.size).toBe(0);
   });
 
-  it("counts pending and running external tasks, with legacy records taking precedence", () => {
+  it("counts pending and running external tasks, with legacy records taking precedence", async () => {
     const cwd = join(root, "external-project");
     const agentDir = join(root, "agent");
     const options = { env: { OMO_CODING_AGENT_DIR: agentDir }, home: root };
@@ -126,12 +128,43 @@ describe("an OmO turn, read from its session file", () => {
     for (const [index, status] of ["pending", "running", "error", "interrupted"].entries()) {
       writeFileSync(join(tasks, `st_${index}.json`), JSON.stringify({ status, parent_session_id: "mine", host_pid: 10 }));
     }
-    expect(Object.fromEntries(omoBackgroundTasks(cwd, () => true, options))).toEqual({ mine: 2 });
-    expect(omoBackgroundTasks(cwd, () => false, options).size).toBe(0);
+    await readOmoBackgroundTasks(cwd, options);
+    expect(Object.fromEntries(omoBackgroundTasks(cwd, () => true, options)!)).toEqual({ mine: 2 });
+    expect(omoBackgroundTasks(cwd, () => false, options)!.size).toBe(0);
     const legacy = join(cwd, ".omo", "senpi-task", "tasks");
     mkdirSync(legacy, { recursive: true });
     writeFileSync(join(legacy, "st_old.json"), JSON.stringify({ status: "pending", parent_session_id: "legacy" }));
-    expect(Object.fromEntries(omoBackgroundTasks(cwd, () => true, options))).toEqual({ legacy: 1 });
+    await readOmoBackgroundTasks(cwd, options);
+    expect(Object.fromEntries(omoBackgroundTasks(cwd, () => true, options)!)).toEqual({ legacy: 1 });
+  });
+
+  it("answers from the last finished read, and asks a host's liveness on every call", async () => {
+    const cwd = join(root, "live-project");
+    const tasks = join(cwd, ".omo", "senpi-task", "tasks");
+    mkdirSync(tasks, { recursive: true });
+    const record = join(tasks, "st_1.json");
+    writeFileSync(record, JSON.stringify({ task_id: "st_1", status: "running", parent_session_id: "mine", host_pid: 10 }));
+    await readOmoBackgroundTasks(cwd);
+    expect(Object.fromEntries(omoBackgroundTasks(cwd, () => true)!)).toEqual({ mine: 1 });
+    // a host that has died is dropped at once, without a read
+    expect(omoBackgroundTasks(cwd, () => false)!.size).toBe(0);
+    // a record that has finished is counted as finished by the read after it
+    writeFileSync(record, JSON.stringify({ task_id: "st_1", status: "completed", parent_session_id: "mine", host_pid: 10 }));
+    await readOmoBackgroundTasks(cwd);
+    expect(omoBackgroundTasks(cwd, () => true)!.size).toBe(0);
+  });
+
+  it("answers nothing until the folder has been read once, and counts a folder asked for again after five idle minutes from scratch", async () => {
+    const cwd = join(root, "idle-project");
+    const tasks = join(cwd, ".omo", "senpi-task", "tasks");
+    mkdirSync(tasks, { recursive: true });
+    writeFileSync(join(tasks, "st_1.json"), JSON.stringify({ status: "running", parent_session_id: "mine", host_pid: 10 }));
+    expect(omoBackgroundTasks(cwd, () => true)).toBeUndefined();
+    await readOmoBackgroundTasks(cwd);
+    const now = Date.now();
+    expect(Object.fromEntries(omoBackgroundTasks(cwd, () => true, {}, now)!)).toEqual({ mine: 1 });
+    // asked for again only after five idle minutes: the folder is dropped, and its count is unknown until it is read
+    expect(omoBackgroundTasks(cwd, () => true, {}, now + 6 * 60_000)).toBeUndefined();
   });
 });
 
@@ -170,6 +203,40 @@ describe("OmO panes' status in place of herdr's", () => {
   }
   const statuses = (snapshot: SessionSnapshot) => Object.fromEntries(snapshot.panes.map((p) => [p.pane_id, `${p.agent}/${p.agent_status}`]));
 
+  /**
+   * One OmO pane whose folder count is the last read that finished: a read is held until `finish` releases it,
+   * and the count is undefined until a read has finished (`known`).
+   */
+  function setupLaggedCount(initial: string) {
+    const files: Record<string, string> = { [FILE]: initial };
+    const told: [string, AgentStatus, number, boolean][] = [];
+    const count = { disk: 0, read: 0, known: false, finish: (): void => {} };
+    const omo = new OmoStatus({
+      discover: async () => new Map<string, OmoPane>([["omo", { path: FILE, startedAt: null }]]),
+      snapshot: async () => herdr(),
+      onChange: (id, status, background, turn) => told.push([id, status, background, turn]),
+      file: {
+        stat: (path) => (path in files ? { size: Buffer.byteLength(files[path]!), id: "1" } : null),
+        lines: (path, from, size, each) => {
+          const text = Buffer.from(files[path]!).subarray(from, size).toString("utf8");
+          const whole = text.slice(0, text.lastIndexOf("\n") + 1);
+          for (const line of whole.split("\n").slice(0, -1)) each({ text: line });
+          return from + Buffer.byteLength(whole);
+        },
+      },
+      background: () => (count.known ? new Map([["01a0f88b-481c-7139-8125-c9cd453b9e17", count.read]]) : undefined),
+      backgroundRead: () => new Promise<void>((resolve) => {
+        count.finish = () => {
+          count.read = count.disk;
+          count.known = true;
+          resolve();
+        };
+      }),
+    });
+    const append = (...entries: string[]) => { files[FILE] += lines(...entries); };
+    return { omo, told, count, append };
+  }
+
   it("uses the session header cwd for counts and lists, falling back to the pane cwd", async () => {
     const { omo, replace, backgroundCwds } = setup(lines(JSON.stringify({ type: "session", cwd: "/session-project" }), message("assistant", "stop")));
     await omo.refresh(herdr().panes);
@@ -201,12 +268,14 @@ describe("OmO panes' status in place of herdr's", () => {
     expect(again[found.lastIndexOf("omo")]).toBe(true);
   });
 
-  it("counts nothing for a folder that cannot be resolved, rather than throwing from the poll", () => {
+  it("counts nothing for a folder that cannot be resolved, rather than throwing from the poll", async () => {
     const parent = mkdtempSync(join(tmpdir(), "omo-locked-"));
     const cwd = join(parent, "project");
     mkdirSync(cwd);
     chmodSync(parent, 0o000);
     try {
+      // a folder that cannot be listed counts nothing once a read has finished (before it, nothing is known)
+      await readOmoBackgroundTasks(cwd, { env: { HOME: parent } });
       expect(omoBackgroundTasks(cwd, () => true, { env: { HOME: parent } })).toEqual(new Map());
     } finally {
       chmodSync(parent, 0o700);
@@ -650,5 +719,32 @@ describe("OmO panes' status in place of herdr's", () => {
     state.clock += 6000;
     await omo.refresh(herdr().panes);
     expect(state.lookups).toBe(2);
+  });
+
+  it("holds a turn's end until a count read after it, so a task started just before the end is counted, not told DONE early", async () => {
+    const { omo, told, count, append } = setupLaggedCount(lines(message("user")));
+    count.known = true;
+    await omo.refresh(herdr().panes);
+    expect(told).toEqual([["omo", "working", 0, true]]);
+    // the task's record is written, then the turn ends: the folder's last finished read predates the record
+    count.disk = 1;
+    append(message("assistant", "stop"));
+    omo.poll();
+    expect(told).toHaveLength(1);
+    // the read that begins after the end counts the task, and only then is the end told
+    count.finish();
+    await Promise.resolve();
+    expect(told.at(-1)).toEqual(["omo", "idle", 1, true]);
+    expect(told.some((entry) => entry[1] === "idle" && entry[2] === 0)).toBe(false);
+  });
+
+  it("tells nothing of a pane before its folder's count has been read, so no zero is taken for the count", async () => {
+    const { omo, told, count } = setupLaggedCount(lines(message("user")));
+    await omo.refresh(herdr().panes);
+    expect(told).toEqual([]);
+    count.read = 2;
+    count.known = true;
+    omo.poll();
+    expect(told).toEqual([["omo", "working", 2, true]]);
   });
 });

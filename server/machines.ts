@@ -9,7 +9,7 @@ import type { ServerMessage, SessionSnapshot, HerdrPane } from "../shared/protoc
 import type { PushService } from "./push.ts";
 import { alertStatus } from "../shared/notify-policy.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
-import { sessionSnapshot } from "./herdr/client.ts";
+import { observedSessionSnapshot } from "./snapshot-cache.ts";
 import { labelOmoPanes } from "./conversation.ts";
 import type { CompletionTracker } from "./completion.ts";
 import { HerdrProfileState, herdrMachineId } from "./herdr-profile-state.ts";
@@ -159,6 +159,9 @@ export function bridgeAgentNews(tell: () => void) {
   };
 }
 
+/** An unchanged roster is sent again this often, so a browser copy that drifted from the server's is corrected. */
+const ROSTER_RESEND_MS = 60_000;
+
 export class MachineManager {
   private machines = new Map<string, Runtime>();
   private jobs = new Map<string, JobState>();
@@ -187,8 +190,13 @@ export class MachineManager {
   private autoChain: Promise<void> = Promise.resolve();
   private autoQueued = new Set<string>();
   private emitTimer?: ReturnType<typeof setTimeout>;
+  /** the roster last sent to the listeners, serialized, and when it went out: an unchanged roster goes out again once ROSTER_RESEND_MS has passed */
+  private rosterJson = "";
+  private rosterSentAt = Date.now();
+  /** the registry last written, serialized: an unchanged registry is not written again */
+  private persisted = "";
 
-  constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(sessionSnapshot, labelOmoPanes)) {
+  constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(() => observedSessionSnapshot(), labelOmoPanes)) {
     this.profileState = new HerdrProfileState(stateDir);
     this.statePath = join(stateDir, "machines.json");
     this.sshDir = join(stateDir, "ssh");
@@ -196,6 +204,8 @@ export class MachineManager {
     this.loadSettings();
     this.loadRegistry();
     this.sweepRecoveredKeys();
+    // the roster a first listener is handed at subscribe is the one emit() compares against
+    this.rosterJson = JSON.stringify(this.list());
     void this.refreshLocal();
     this.localTimer = setInterval(() => void this.refreshLocal(), 5000);
     this.localTimer.unref();
@@ -369,9 +379,24 @@ export class MachineManager {
     listener({ type: "machines", machines: this.list() });
     return () => this.listeners.delete(listener);
   }
+  /**
+   * A roster goes out when it differs from the one last sent, and anyway once ROSTER_RESEND_MS has passed since
+   * it last went out: a 5 s read that finds the same machines would otherwise send nothing, so a drifted browser
+   * copy would never be corrected. An event about one machine always goes out.
+   */
   private emit(event?: MachineEvent): void {
     if (this.stopped) return;
-    for (const listener of this.listeners) listener(event ?? { type: "machines", machines: this.list() });
+    if (event) {
+      for (const listener of this.listeners) listener(event);
+      return;
+    }
+    const machines = this.list();
+    const json = JSON.stringify(machines);
+    const now = Date.now();
+    if (json === this.rosterJson && now - this.rosterSentAt < ROSTER_RESEND_MS) return;
+    this.rosterJson = json;
+    this.rosterSentAt = now;
+    for (const listener of this.listeners) listener({ type: "machines", machines });
   }
   localMessage(message: ServerMessage): void {
     // Structural invalidations queue a follow-up below without discarding the
@@ -433,7 +458,12 @@ export class MachineManager {
     // a registry that has not been read is not written over: this run's PCs would replace the saved ones
     if (this.ensureRegistry()) {
       const data: StoredMachine[] = [...this.machines.values()].filter(({ machine }) => !machine.herdr_profile_id).map(({ machine: m }) => ({ id: m.id, name: m.name, target: m.target!, enabled: m.enabled, snapshot: m.snapshot }));
-      writeFileAtomic(this.statePath, JSON.stringify(data), { mode: 0o600 });
+      // an unchanged registry is not written again: each write is an fsync of the file and its directory
+      const json = JSON.stringify(data);
+      if (json !== this.persisted) {
+        writeFileAtomic(this.statePath, json, { mode: 0o600 });
+        this.persisted = json;
+      }
     }
     for (const { machine } of this.machines.values()) if (machine.herdr_profile_id) this.profileState.saveSnapshot(machine.herdr_profile_id, machine.snapshot);
     this.profileState.flush();
