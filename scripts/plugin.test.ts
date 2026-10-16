@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -214,20 +214,74 @@ describe("port", () => {
 });
 
 describe("stop", () => {
-  it("returns only once the server's process group is gone", async () => {
+  /** Ends a process this test started, and what it started, so that a failed assertion cannot leave it running. */
+  const killTree = (pid: number): void => {
+    if (platform() === "win32") {
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      return;
+    }
+    try { process.kill(-pid, "SIGKILL"); } catch { /* its group is already gone */ }
+  };
+  /** Whether a pid names a live process: a child is gone at once once it is killed, handle or no handle. */
+  const alive = (pid: number): boolean => {
+    try { process.kill(pid, 0); return true; }
+    catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+  };
+
+  // POSIX only: stop signals the process group, which Windows does not have; the Windows case is below
+  it.skipIf(platform() === "win32")("returns only once the server's process group is gone", async () => {
     // a server that takes a second to exit, as the supervisor does while its bridge shuts down
     const server = spawn("sh", ["-c", "trap 'sleep 1; exit 0' TERM; while :; do sleep 0.1; done"], { detached: true, stdio: "ignore" });
     const pid = server.pid!;
-    mkdirSync(join(scratch, "state"));
-    writeFileSync(join(scratch, "state", "server.pid"), `${pid}\n`);
-    const started = Date.now();
-    const stopped = await run("stop");
-    expect(stopped.exitCode, stopped.err).toBe(0);
-    expect(stopped.out).toContain(`stopped herdr web ui (pid ${pid})`);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
-    expect(() => process.kill(-pid, 0)).toThrow();
-    expect(existsSync(join(scratch, "state", "server.pid"))).toBe(false);
+    try {
+      mkdirSync(join(scratch, "state"));
+      writeFileSync(join(scratch, "state", "server.pid"), `${pid}\n`);
+      const started = Date.now();
+      const stopped = await run("stop");
+      expect(stopped.exitCode, stopped.err).toBe(0);
+      expect(stopped.out).toContain(`stopped herdr web ui (pid ${pid})`);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+      expect(() => process.kill(-pid, 0)).toThrow();
+      expect(existsSync(join(scratch, "state", "server.pid"))).toBe(false);
+    } finally { killTree(pid); }
   });
+
+  it.skipIf(platform() !== "win32")("stops the recorded server's whole process tree on Windows", async () => {
+    // stop ends a recorded pid's tree only once it has verified the pid is this app's server: a bun process
+    // whose command line runs <plugin root>/server/managed.ts, so the fixture is one, with a child to be ended too
+    const root = join(scratch, "root");
+    mkdirSync(join(root, "server"), { recursive: true });
+    const managed = join(root, "server", "managed.ts");
+    writeFileSync(managed, [
+      'import { writeFileSync } from "node:fs";',
+      'const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "ignore", "ignore"] });',
+      "writeFileSync(process.argv[2]!, String(child.pid));",
+      "setInterval(() => {}, 1000);",
+    ].join("\n"));
+    const childPidFile = join(scratch, "child.pid");
+    const server = spawn(process.execPath, [managed, childPidFile], { detached: true, stdio: "ignore", windowsHide: true });
+    const pid = server.pid!;
+    const childPidOf = (): number => (existsSync(childPidFile) ? Number(readFileSync(childPidFile, "utf8")) : 0);
+    let childPid = 0;
+    try {
+      mkdirSync(join(scratch, "state"));
+      writeFileSync(join(scratch, "state", "server.pid"), `${pid}\n`);
+      for (const deadline = Date.now() + 10_000; childPidOf() <= 0 && Date.now() < deadline;) await Bun.sleep(25);
+      childPid = childPidOf();
+      expect(childPid).toBeGreaterThan(0);
+      expect(alive(childPid)).toBe(true);
+      // the config dir is given, so stop does not ask the PC's own herdr for it
+      const stopped = await run("stop", { HERDR_PLUGIN_ROOT: root, HERDR_PLUGIN_CONFIG_DIR: configDir });
+      expect(stopped.exitCode, stopped.err).toBe(0);
+      expect(stopped.out).toContain(`stopped herdr web ui (pid ${pid})`);
+      expect(alive(pid)).toBe(false);
+      expect(alive(childPid)).toBe(false);
+      expect(existsSync(join(scratch, "state", "server.pid"))).toBe(false);
+    } finally {
+      killTree(pid);
+      if (childPid > 0) killTree(childPid);
+    }
+  }, 40_000);
 
   // a server that exited while its parent (a plugin host, say) has not reaped it yet
   it.skipIf(platform() !== "linux" || !Bun.which("setsid"))("counts an exited, unreaped server as gone", async () => {
