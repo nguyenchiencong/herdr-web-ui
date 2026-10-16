@@ -2,17 +2,15 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { acquire, acquireWaiting, checkoutIdentity, describeHolders, endWindowsTree, isolate, lock, maxRuns, needsLock, plan, sanitizeCommand, waitSeconds, windowsTreeMembers } from "./check.ts";
+import { acquire, acquireWaiting, checkoutIdentity, describeHolders, endWindowsTree, isolate, lock, maxRuns, needsLock, plan, sanitizeCommand, tempRoot, waitSeconds, windowsTreeMembers } from "./check.ts";
 import type { ProcessRow } from "../server/windows-processes.ts";
 
 const made: string[] = [];
 afterEach(() => { for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true }); });
-// /tmp where there is one, as `isolate` itself prefers: macOS keeps its temp dir under a path so long
-// that a socket inside a directory made there is past the limit `isolate` enforces
-const scratchBase = existsSync("/tmp") ? realpathSync("/tmp") : tmpdir();
+// the root `isolate` uses, resolved: herdr reports a pane's cwd resolved, so a fixture under an unresolved path never matches it
+const scratchBase = realpathSync(tempRoot());
 const scratch = (): string => { const dir = mkdtempSync(join(scratchBase, "hwc-")); made.push(dir); return dir; };
 const git = (cwd: string, ...args: string[]): void => {
   const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });

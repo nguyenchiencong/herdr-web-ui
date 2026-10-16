@@ -125,13 +125,23 @@ export interface Isolation {
 }
 
 /**
+ * Where a check run's `hwc-` directories go: /tmp where there is one, since macOS's temp dir is so deep that a unix
+ * socket made under it is past SOCKET_PATH_MAX. Resolved, so the path is drive-qualified on Windows: herdr there
+ * listens on a named pipe named after the socket path it was given, and a drive-less path makes the client dial a
+ * pipe name herdr never listens on. tmpdir() is the fallback.
+ */
+export function tempRoot(): string {
+  return existsSync("/tmp") ? resolve("/tmp") : tmpdir();
+}
+
+/**
  * A herdr of the run's own: the environment that points herdr, its plugins and the web UI at one
  * directory, and a session name no other run has.
  */
 export function isolate(base: Record<string, string | undefined>, kept: string | undefined = base["CHECK_DIR"]): Isolation {
   if (base["HERDR_TEST_LIVE"] === "1") throw new Error("HERDR_TEST_LIVE=1 runs tests in the herdr you work in; unset it for `bun run check`");
   // short on purpose: the session's socket path has to fit a unix socket address
-  const dir = kept ? resolve(kept) : mkdtempSync(join(existsSync("/tmp") ? "/tmp" : tmpdir(), "hwc-"));
+  const dir = kept ? resolve(kept) : mkdtempSync(join(tempRoot(), "hwc-"));
   const session = `check-${randomBytes(3).toString("hex")}`;
   const config = join(dir, "config");
   for (const path of [config, join(dir, "state"), join(dir, "web-state")]) {

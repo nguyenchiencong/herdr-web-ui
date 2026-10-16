@@ -1,6 +1,5 @@
 import "./test-herdr.ts";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium, type Browser } from "playwright-core";
 import { createServer } from "../server/index.ts";
@@ -28,6 +27,7 @@ import { checkBackgroundTabKeepsTerminalSize, checkChatKeepsTerminalSize, checkF
 import { checkUpdateNotice } from "./update-notice-regression.ts";
 import { checkTelemetrySettings } from "./telemetry-regression.ts";
 import { chromePath } from "./chrome-path.ts";
+import { tempRoot } from "./check.ts";
 
 async function timed(name: string, check: () => Promise<void>): Promise<void> {
   const started = performance.now();
@@ -51,8 +51,7 @@ function isWorkspaceMissing(error: unknown): boolean {
 }
 
 export async function runUiContextChecks(): Promise<void> {
-  const tempBase = existsSync("/tmp") ? "/tmp" : tmpdir();
-  const root = realpathSync(mkdtempSync(join(tempBase, "hwc-")));
+  const root = realpathSync(mkdtempSync(join(tempRoot(), "hwc-")));
   const workspaces: string[] = [];
   const cleanupErrors: unknown[] = [];
   let server: ReturnType<typeof createServer> | undefined;
