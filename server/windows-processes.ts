@@ -283,7 +283,8 @@ export async function processTable(
 /**
  * The process table of this PC, or nothing when it cannot be read: one PowerShell query per call, cut off at
  * `timeoutMs`, so a caller with a deadline keeps it. A custom `command` runs in its place. One-off callers take
- * this, which leaves no PowerShell running; the periodic polls take polledProcessTable.
+ * this, which leaves no PowerShell running; the periodic polls take polledProcessTable. A readable table always
+ * lists the System processes, so an empty one means the read failed, not that no process matched.
  */
 export function windowsProcessTable(timeoutMs = 10_000, command?: string[]): Promise<ProcessRow[]> {
   return oneShotProcessTable(timeoutMs, command);

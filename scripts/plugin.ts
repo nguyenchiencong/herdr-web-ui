@@ -387,7 +387,11 @@ export async function stop(dependencies: StopDependencies = stopDependencies): P
   if (dependencies.isWindows) {
     // A stale PID can belong to another app, or a newer instance of this plugin.
     const recordedAt = statSync(PID_FILE).mtimeMs;
-    const processes = await dependencies.processTable();
+    const identityDeadline = Date.now() + STOP_TIMEOUT_MS;
+    let processes = await dependencies.processTable();
+    // An empty table is a read that failed (a readable one always lists the System processes), so one more read
+    // may use the time left before the stop timeout. A table without the recorded process is final: no retry.
+    if (processes.length === 0 && Date.now() < identityDeadline) processes = await dependencies.processTable(identityDeadline - Date.now());
     const owner = processes.find(row => row.pid === pid);
     const argv = windowsArgv(owner?.commandLine ?? "");
     if (owner?.path?.toLowerCase() !== process.execPath.toLowerCase()
