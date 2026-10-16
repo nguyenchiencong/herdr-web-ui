@@ -39,6 +39,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { finished } from "node:stream/promises";
 import { DISPOSABLE_CONFIG_ENV, DISPOSABLE_CONFIG_FILE } from "./disposable-config.ts";
+import { windowsProcessTable, type ProcessRow } from "../server/windows-processes.ts";
 import {
   artifactIdentity,
   artifactUnchangedAfterBuild,
@@ -612,12 +613,12 @@ async function main(): Promise<void> {
       }
       saveReport();
       void (async () => {
-        // The step runs in a process group of its own, and a lane starts processes of its own
-        // in it: the whole group gets the signal, and has ended before the herdr and the
-        // directory it uses are taken away.
+        // The step runs in a process group of its own (on Windows, a tree: see endStep), and a lane
+        // starts processes of its own in it: the whole group gets the signal, and has ended before the
+        // herdr and the directory it uses are taken away.
         await Promise.all([
-          child?.pid !== undefined ? endGroup(child.pid, signal) : undefined,
-          concurrentUnit?.pid !== undefined ? endGroup(concurrentUnit.pid, signal) : undefined,
+          child ? endStep(child, signal) : undefined,
+          concurrentUnit ? endStep(concurrentUnit, signal) : undefined,
         ]);
         if (activeStepFinished) await activeStepFinished;
         if (concurrentUnitFinished) await concurrentUnitFinished;
@@ -716,6 +717,8 @@ async function main(): Promise<void> {
       try {
         const started = spawn(command[0]!, command.slice(1), { stdio: ["inherit", "pipe", "pipe"], env, cwd: commandCwd, detached: true });
         child = started;
+        const times = { startedAt: startedAtMs, exitedAt: null as number | null };
+        stepTimes.set(started, times);
         const stdoutStream = started.stdout;
         const stderrStream = started.stderr;
         let stdoutClosed = !stdoutStream;
@@ -739,7 +742,7 @@ async function main(): Promise<void> {
             stdoutStream?.destroy();
             stderrStream?.destroy();
             void (async () => {
-              if (started.pid !== undefined) await endGroup(started.pid, "SIGTERM");
+              await endStep(started, "SIGTERM");
               finish(exitCode, exitSignal);
             })();
           }, OUTPUT_DRAIN_GRACE_MS);
@@ -753,6 +756,7 @@ async function main(): Promise<void> {
         started.once("error", (error) => finish(127, null, error));
         started.once("exit", (code, signal) => {
           exited = true;
+          times.exitedAt = Date.now();
           exitCode = code;
           exitSignal = signal;
           maybeFinishAfterExit();
@@ -843,6 +847,9 @@ async function main(): Promise<void> {
       unitStderr.on("error", (error) => { unitLogsFailed = true; console.error(`check: unit stderr log failed: ${error.message}`); });
       const unit = spawn(bun, ["run", "test:unit"], { stdio: ["inherit", "pipe", "pipe"], env: plain, cwd, detached: true });
       concurrentUnit = unit;
+      const unitTimes = { startedAt: unitStartedAtMs, exitedAt: null as number | null };
+      stepTimes.set(unit, unitTimes);
+      unit.once("exit", () => { unitTimes.exitedAt = Date.now(); });
       unit.stdout?.on("data", (chunk: Buffer) => { process.stdout.write(chunk); unitStdout.write(chunk); });
       unit.stderr?.on("data", (chunk: Buffer) => { process.stderr.write(chunk); unitStderr.write(chunk); });
       concurrentUnitFinished = (async () => {
@@ -971,6 +978,60 @@ async function endGroup(group: number, signal: NodeJS.Signals): Promise<void> {
   if (await gone(END_GRACE_MS)) return;
   try { process.kill(-group, "SIGKILL"); } catch (error) { if (none(error)) return; }
   if (!(await gone(2_000))) console.error(`check: processes in step process group ${group} are still running`);
+}
+
+/** When each step's root started and exited: Windows ends what a step left by pid, and needs both times to tell its children from a reused pid. */
+const stepTimes = new WeakMap<ChildProcess, { startedAt: number; exitedAt: number | null }>();
+
+/** Ends a step's processes: its process group on POSIX, its tree on Windows (see endWindowsTree). */
+async function endStep(proc: ChildProcess, signal: NodeJS.Signals): Promise<void> {
+  if (proc.pid === undefined) return;
+  if (process.platform !== "win32") return endGroup(proc.pid, signal);
+  const times = stepTimes.get(proc);
+  const ended = await endWindowsTree(proc.pid, times?.startedAt ?? 0, times?.exitedAt ?? null);
+  if (ended > 0) console.error(`check: ended ${ended} process(es) the step left running`);
+}
+
+/**
+ * The processes a step left in the process table once its root has exited: the root's children that started
+ * between the step's start and its exit (a process that started before the step cannot be its child, and a pid
+ * the root held may since have gone to a process that started after the exit), then the children of those, for
+ * as long as each started no earlier than its parent. A process whose parent exited before the read has no link
+ * left to follow, so it is not found.
+ */
+export function windowsTreeMembers(rows: readonly ProcessRow[], root: number, startedAt: number, exitedAt: number): { pid: number; started: number }[] {
+  const members = new Map<number, number>();
+  for (const row of rows) {
+    if (row.parent === root && row.started !== undefined && row.started >= startedAt && row.started <= exitedAt) members.set(row.pid, row.started);
+  }
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const row of rows) {
+      const parentStarted = members.get(row.parent);
+      if (members.has(row.pid) || row.started === undefined || parentStarted === undefined || row.started < parentStarted) continue;
+      members.set(row.pid, row.started);
+      grew = true;
+    }
+  }
+  return [...members].map(([pid, started]) => ({ pid, started }));
+}
+
+/**
+ * Ends a step's tree on Windows, which has no process group to signal. While the root runs, taskkill ends it with
+ * every live descendant (it walks the parent links). Once the root has exited, the processes it left are read from
+ * the table and ended by pid (windowsTreeMembers). Returns how many it found and tried to end.
+ */
+export async function endWindowsTree(root: number, startedAt: number, exitedAt: number | null): Promise<number> {
+  const kill = (pid: number, tree: boolean): void => {
+    spawnSync("taskkill", ["/PID", String(pid), ...(tree ? ["/T"] : []), "/F"], { stdio: "ignore", windowsHide: true, timeout: 10_000 });
+  };
+  if (exitedAt === null) {
+    kill(root, true);
+    return 0;
+  }
+  const members = windowsTreeMembers(await windowsProcessTable(10_000), root, startedAt, exitedAt);
+  for (const member of members) kill(member.pid, false);
+  return members.length;
 }
 
 /**

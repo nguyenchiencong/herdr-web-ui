@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { acquire, acquireWaiting, checkoutIdentity, describeHolders, isolate, lock, maxRuns, needsLock, plan, sanitizeCommand, waitSeconds } from "./check.ts";
+import { acquire, acquireWaiting, checkoutIdentity, describeHolders, endWindowsTree, isolate, lock, maxRuns, needsLock, plan, sanitizeCommand, waitSeconds, windowsTreeMembers } from "./check.ts";
+import type { ProcessRow } from "../server/windows-processes.ts";
 
 const made: string[] = [];
 afterEach(() => { for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -558,4 +559,93 @@ describe("check CLI", () => {
     expect(missingBuildReport.verification.status).toBe("unknown");
     expect(missingBuildReport.errors).toContain("built dist identity unavailable; cannot verify the built artifact");
   });
+});
+
+describe("windowsTreeMembers", () => {
+  it("finds the processes a step left behind, and nothing that started outside its life or hangs from a process that is gone", () => {
+    const row = (pid: number, parent: number, started?: number): ProcessRow => ({ pid, parent, path: null, commandLine: null, ...(started === undefined ? {} : { started }) });
+    const rows = [
+      row(100, 1, 900), // the step's root
+      row(101, 100, 1500), // its child, started during its life
+      row(102, 100, 900), // started before the step: a pid the root never held
+      row(103, 100, 2500), // started after the root exited: a later process given its pid
+      row(104, 101, 1600), // a grandchild of a live child
+      row(105, 104, 1550), // started before its parent, so the parent link is stale
+      row(106, 999, 1700), // its parent is gone from the table
+      row(107, 106, 1800), // so nothing below it can be reached
+      row(108, 101), // no start time, so its identity cannot be checked
+    ];
+    expect(windowsTreeMembers(rows, 100, 1000, 2000)).toEqual([{ pid: 101, started: 1500 }, { pid: 104, started: 1600 }]);
+  });
+});
+
+describe("endWindowsTree", () => {
+  // a step root that starts a detached branch (a detached child outlives its parent's exit) and the branch's plain child
+  const writeTree = (dir: string): void => {
+    writeFileSync(join(dir, "leaf.ts"), "setInterval(() => {}, 1000);\n");
+    writeFileSync(join(dir, "branch.ts"), [
+      'import { spawn } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      "const [, , dir] = process.argv;",
+      'const leaf = spawn(process.execPath, [`${dir}/leaf.ts`], { stdio: "ignore", windowsHide: true });',
+      'writeFileSync(`${dir}/leaf.pid`, String(leaf.pid));',
+      "setInterval(() => {}, 1000);",
+    ].join("\n"));
+    writeFileSync(join(dir, "root.ts"), [
+      'import { spawn } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      "const [, , dir, mode] = process.argv;",
+      'const branch = spawn(process.execPath, [`${dir}/branch.ts`, dir], { detached: true, stdio: "ignore", windowsHide: true });',
+      'writeFileSync(`${dir}/branch.pid`, String(branch.pid));',
+      'if (mode === "exit") process.exit(0);',
+      "setInterval(() => {}, 1000);",
+    ].join("\n"));
+  };
+  const alive = (pid: number): boolean => {
+    try { process.kill(pid, 0); return true; }
+    catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+  };
+  const pidIn = async (file: string): Promise<number> => {
+    for (const deadline = Date.now() + 20_000; !existsSync(file) && Date.now() < deadline;) await Bun.sleep(25);
+    return Number(readFileSync(file, "utf8"));
+  };
+  const goneSoon = async (pid: number): Promise<boolean> => {
+    for (const deadline = Date.now() + 20_000; alive(pid) && Date.now() < deadline;) await Bun.sleep(50);
+    return !alive(pid);
+  };
+  const killTree = (pid: number): void => { spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }); };
+
+  it.skipIf(process.platform !== "win32")("ends a live step's whole tree, detached children included", async () => {
+    const dir = scratch();
+    writeTree(dir);
+    const root = spawn(process.execPath, [join(dir, "root.ts"), dir, "stay"], { detached: true, stdio: "ignore", windowsHide: true });
+    const pids = [root.pid!, await pidIn(join(dir, "branch.pid")), await pidIn(join(dir, "leaf.pid"))];
+    try {
+      expect(pids.every((pid) => alive(pid))).toBe(true);
+      await endWindowsTree(root.pid!, Date.now(), null);
+      for (const pid of pids) expect(await goneSoon(pid)).toBe(true);
+    } finally {
+      for (const pid of pids) killTree(pid);
+    }
+  }, 60_000);
+
+  it.skipIf(process.platform !== "win32")("ends what an exited step root left running, found through the parent link the orphan keeps", async () => {
+    const dir = scratch();
+    writeTree(dir);
+    const startedAt = Date.now();
+    const root = spawn(process.execPath, [join(dir, "root.ts"), dir, "exit"], { detached: true, stdio: "ignore", windowsHide: true });
+    const exitedAt = await new Promise<number>((resolve) => root.once("exit", () => resolve(Date.now())));
+    const branch = await pidIn(join(dir, "branch.pid"));
+    const leaf = await pidIn(join(dir, "leaf.pid"));
+    try {
+      // the detached branch outlives its exited parent: the teardown finds it by the ParentProcessId it still carries
+      expect(alive(branch)).toBe(true);
+      expect(await endWindowsTree(root.pid!, startedAt, exitedAt)).toBeGreaterThanOrEqual(1);
+      expect(await goneSoon(branch)).toBe(true);
+      expect(await goneSoon(leaf)).toBe(true);
+    } finally {
+      killTree(branch);
+      killTree(leaf);
+    }
+  }, 60_000);
 });
