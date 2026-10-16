@@ -10,7 +10,7 @@ export async function checkCommandBackspace(browser: Browser, origin: string, pa
   const context = await browser.newContext({ viewport: { width: 1100, height: 650 } });
   await context.addInitScript((id) => {
     Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
     localStorage.setItem(`herdr-web-ui:view:${id}`, "terminal");
   }, paneId);
   try {

@@ -11,7 +11,7 @@ export async function checkComposerReconnect(browser: Browser, origin: string, p
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
     await context.addInitScript((pane) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
       localStorage.setItem(`herdr-web-ui:view:${pane}`, "chat");
     }, paneId);
     const page = await context.newPage();

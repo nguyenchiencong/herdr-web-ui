@@ -39,7 +39,7 @@ process.stdin.on('data', bytes => {
 
 /** Runs only in this diagnostic's temporary build, before the app connects. */
 function installTrace(pane: string): void {
-  localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
+  localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: "direct" }));
   localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
   let sequence = 0;
   let pending = Promise.resolve<unknown>(undefined);

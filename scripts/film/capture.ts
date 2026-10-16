@@ -129,7 +129,6 @@ interface Open {
   phone?: boolean;
   viewport?: { width: number; height: number };
   theme?: "dark" | "light";
-  language?: "en" | "ko";
   /** fixture changes: see the header */
   mods?: { todo?: boolean; real?: boolean; worked?: boolean; stream?: boolean; story?: "opening" | "before" | "after" | "after-plain" | "next" };
   /** ms after the app is up before the caller takes over; the Claude turn ends 4.5 s after load */
@@ -319,12 +318,12 @@ async function open(options: Open): Promise<{ context: BrowserContext; page: Pag
   const scale = options.scale ?? 2;
   const browser = await browserAt(scale);
   const context = await browser.newContext({
-    viewport, deviceScaleFactor: scale, colorScheme: options.theme ?? "dark", locale: options.language === "ko" ? "ko-KR" : "en-US",
+    viewport, deviceScaleFactor: scale, colorScheme: options.theme ?? "dark", locale: "en-US",
     ...(phone ? { isMobile: true, hasTouch: true } : {}),
   });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.warn(`  page error: ${error.message}`));
-  const settings = { theme: options.theme ?? "dark", language: options.language ?? "en", ...(options.terminalFont ? { terminalFontSize: options.terminalFont } : {}) };
+  const settings = { theme: options.theme ?? "dark", ...(options.terminalFont ? { terminalFontSize: options.terminalFont } : {}) };
   await page.addInitScript((value) => { try { localStorage.setItem("herdr-web-ui:settings", value); } catch { /* no storage */ } }, JSON.stringify(settings));
   // the hook goes in whenever a take may arm it; it holds nothing until armed
   await page.addInitScript(filmHold, options.hold ?? []);
@@ -472,8 +471,6 @@ async function stills(): Promise<void> {
     return "shot";
   }, "clip 0,0 to sidebar width x 700 CSS px");
   await still("10-desktop-chat-light", "Claude chat in the light (ledger paper) theme", { pane: "api", theme: "light" });
-  await still("11-desktop-chat-korean", "Claude chat with the UI in Korean (Settings > language: ko)", { pane: "api", language: "ko" });
-  await still("11b-desktop-codex-korean", "Codex approval card with the UI in Korean", { pane: "web", language: "ko" });
   await still("12-phone-chat", "Phone: Claude chat", { pane: "api", phone: true });
   await still("13-phone-sessions-drawer", "Phone: the sessions drawer open (every agent with its status)", { pane: "api", phone: true }, async (page) => {
     await page.locator(".drawer-toggle").tap();

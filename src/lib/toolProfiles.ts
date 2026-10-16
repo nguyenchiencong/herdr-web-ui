@@ -15,7 +15,7 @@ export type ToolIcon = "subagent" | "steer" | "result" | "background" | "stop" |
 export type ReferenceKind = "agent" | "task";
 
 export interface ToolProfile {
-  /** what the row shows in place of the tool id: an English key the dictionaries translate */
+  /** what the row shows in place of the tool id: English text for `t` */
   label: string;
   icon: ToolIcon;
   /** the argument whose value summarises the call; a `code` argument is summarised by the tools it calls */
@@ -45,8 +45,7 @@ const HUMAN_KEYS = ["description", "name", "message", "target", "query", "action
 const SHORT_SCALAR = 80;
 
 /**
- * The profiles by the tool's exact id. Labels are the English keys the dictionaries translate, and
- * src/lib/i18n.test.ts reads them from this table.
+ * The profiles by the tool's exact id. Labels are English text for `t`.
  */
 export const TOOL_PROFILES: Readonly<Record<string, ToolProfile>> = {
   Agent: { label: "Subagent", icon: "subagent", summary: "description", category: "subagent" },

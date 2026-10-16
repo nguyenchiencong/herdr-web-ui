@@ -24,7 +24,7 @@ export async function checkDefaultView(browser: Browser, origin: string): Promis
     const [one, two] = panes as [string, string];
     await context.addInitScript((pane) => {
       if (localStorage.getItem("herdr-web-ui:settings") !== null) return;
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
       localStorage.setItem(`herdr-web-ui:view:local:${pane}`, "terminal"); // a pane that remembered the terminal
     }, two);
     const page = await context.newPage();

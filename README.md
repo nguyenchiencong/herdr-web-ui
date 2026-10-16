@@ -1,8 +1,7 @@
 # herdr web ui
 
 <p align="center">
-  <img src="public/icons/icon-192.png" alt="herdr web ui" width="100"><br>
-  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
+  <img src="public/icons/icon-192.png" alt="herdr web ui" width="100">
 </p>
 
 A browser and phone client for [herdr](https://github.com/herdrdev/herdr). Supported agents (Claude Code, Codex and [others](docs/guide.md#supported-agents)) show their chat, and every agent pane has its live terminal a click away. Remote PCs join over SSH, and web push alerts tell you when an agent needs input. It runs beside herdr's own TUI on the same panes, not instead of it. On Windows the terminal is a screen mirror (typing and a fixed grid), because herdr cannot attach terminals there yet. The upstream [website](https://herdrweb.dev/) has a [demo](https://herdrweb.dev/demo/).

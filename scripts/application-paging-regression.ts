@@ -47,7 +47,7 @@ sys.stdout.flush()
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 1024, height: 600 }, locale: "en-US" });
   await context.addInitScript(() => {
-    if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", terminalInputMode: "direct", alertsOn: false }));
+    if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ defaultView: "terminal", terminalInputMode: "direct", alertsOn: false }));
   });
   const page = await context.newPage();
   const errors: string[] = [];

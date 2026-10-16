@@ -9,7 +9,7 @@ export async function checkHeldDraftPaneSwitch(browser: Browser, origin: string,
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   try {
     await context.addInitScript((ids) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, terminalInputMode: "direct" }));
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ alertsOn: false, terminalInputMode: "direct" }));
       for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "terminal");
     }, [paneA, paneB]);
     await context.routeWebSocket(/\/ws(?:\?|$)/, (socket) => socket.close({ code: 1000, reason: "offline for the held-input check" }));
@@ -34,7 +34,7 @@ export async function checkHeldDraftPaneSwitch(browser: Browser, origin: string,
   const notReady = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   try {
     await notReady.addInitScript((ids) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, terminalInputMode: "direct" }));
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ alertsOn: false, terminalInputMode: "direct" }));
       for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "terminal");
     }, [paneA, paneB]);
     await notReady.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {

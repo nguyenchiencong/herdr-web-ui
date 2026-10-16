@@ -116,10 +116,8 @@ try {
   });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
   await context.addInitScript(({ ids, legacyFoldKey }) => {
-    // Browser locale alone does not override the app's remembered language.
-    // Preserve a language changed through Settings across subsequent reloads.
     if (!localStorage.getItem("herdr-web-ui:settings")) {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false }));
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ alertsOn: false }));
       localStorage.setItem(legacyFoldKey, "1");
     }
     for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");

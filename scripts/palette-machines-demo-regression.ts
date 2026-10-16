@@ -85,7 +85,7 @@ try {
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
       try {
         await context.addInitScript((paneId) => {
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
           for (const id of ["local", "remote", "offline"]) localStorage.setItem(`herdr-web-ui:pc-collapsed:${id}`, "1");
           localStorage.setItem("herdr-web-ui:recent-panes:remote", JSON.stringify([paneId]));
         }, panes.api);

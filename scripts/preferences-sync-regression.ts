@@ -35,7 +35,7 @@ interface Opened { context: BrowserContext; page: Page; puts: { settings: Record
 async function browserAt(browser: Awaited<ReturnType<typeof chromium.launch>>, own: Record<string, unknown> = {}, pins: string[] = [], before?: (context: BrowserContext) => Promise<void>): Promise<Opened> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: "en-US" });
   await context.addInitScript(([own, pins]) => {
-    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: "dark", terminalFontSize: 13, ...own }));
+    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ theme: "dark", terminalFontSize: 13, ...own }));
     if (!localStorage.getItem("herdr-web-ui:sidebar-agent-pins")) localStorage.setItem("herdr-web-ui:sidebar-agent-pins", JSON.stringify(pins));
   }, [own, pins] as const);
   await before?.(context);

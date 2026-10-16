@@ -52,7 +52,7 @@ const shots = resolve("evidence/machine-conflict"); mkdirSync(shots, { recursive
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors: string[] = []; page.on("pageerror", (e) => errors.push(e.message));
-  await page.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+  await page.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
   await page.goto(server.url.href);
   const notice = page.locator(".machine-action");
   await notice.getByText("Bridge connection conflict", { exact: true }).waitFor({ timeout: 10_000 });

@@ -50,7 +50,7 @@ export function workStartsOpen(live: boolean, parts: ConversationPart[]): boolea
 
 type WorkCategory = "subagent" | "edit" | "read" | "command" | "search" | "web" | "other";
 
-/** "{n} edit" / "{n} edits": both forms are translated, Korean uses one */
+/** "{n} edit" / "{n} edits": the singular and the plural */
 export const CATEGORY_LABEL: Record<WorkCategory, [singular: string, plural: string]> = {
   subagent: ["{n} subagent", "{n} subagents"],
   edit: ["{n} edit", "{n} edits"],

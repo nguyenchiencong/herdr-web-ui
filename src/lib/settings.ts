@@ -7,8 +7,8 @@
 
 import type { TelemetrySettings } from "../../shared/telemetry.ts";
 import { SHARED_SETTING_KEYS, type SharedSettingKey } from "../../shared/preferences.ts";
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useReducer, useState, type ReactNode } from "react";
-import { currentLanguage, isLanguageLoaded, LANGUAGE_SETTINGS, loadLanguage, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { LOCALE } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
 import { fontScale, sanitizeUiFontSize } from "./typography.ts";
@@ -44,7 +44,7 @@ export const VOICE_BUTTONS: readonly VoiceButton[] = ["auto", "on", "off"];
 /**
  * The languages dictation can be set to, as BCP 47 tags (SpeechRecognition.lang; the transcribe
  * route takes the first subtag). Auto can also use a browser language outside this list when
- * its primary subtag is two letters and the UI is not translated into it.
+ * its primary subtag is two letters and it is not English.
  */
 export const DICTATION_LANGUAGES = [
   "ar-SA", "cs-CZ", "da-DK", "de-DE", "el-GR", "en-GB", "en-US", "es-ES", "fi-FI", "fr-FR", "he-IL", "hi-IN",
@@ -111,8 +111,6 @@ export interface Settings {
   showThinking: boolean;
   /** request a screen wake lock while a pane is open in this visible tab */
   keepScreenOn: boolean;
-  /** UI language; `system` follows the browser (src/lib/i18n.ts) */
-  language: LanguageSetting;
   /** alerts on this device at all: the bell turns them off (push subscription dropped) and on */
   alertsOn: boolean;
   /** alert this device when an agent waits on the user (shared/notify-policy.ts AlertPrefs) */
@@ -139,7 +137,7 @@ export interface Settings {
   usageHidden: string[];
   /** the microphone button in the composer and the terminal input line; nothing is recorded until it is pressed */
   voiceInput: VoiceButton;
-  /** the language dictation listens for; auto: the UI language's, or the browser's the UI lacks (src/lib/voice.ts dictationLocale) */
+  /** the language dictation listens for; auto: the browser's first language when it is not English (src/lib/voice.ts dictationLocale) */
   voiceLanguage: DictationLanguage;
   voicePolishChat: boolean;
   /** off by default: a terminal line is usually a command, kept as spoken */
@@ -192,7 +190,6 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
     autoSendQueued: settings.autoSendQueued,
     showThinking: settings.showThinking,
     keepScreenOn: settings.keepScreenOn,
-    language: settings.language,
     alertsOn: settings.alertsOn,
     alertInput: settings.alertInput,
     alertDone: settings.alertDone,
@@ -228,7 +225,7 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
  * must be placed here, or the build fails; when in doubt it is the device's.
  */
 export const SETTING_SCOPE = {
-  theme: "shared", palette: "shared", language: "shared", sidebarRows: "shared", agentOrder: "shared",
+  theme: "shared", palette: "shared", sidebarRows: "shared", agentOrder: "shared",
   agentMarks: "shared", autoSendQueued: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showUsage: "shared", usageCount: "shared",
   usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", defaultView: "device",
@@ -275,7 +272,6 @@ export const DEFAULT_SETTINGS: Settings = {
   autoSendQueued: true,
   showThinking: false,
   keepScreenOn: false,
-  language: "system",
   alertsOn: true,
   alertInput: true,
   alertDone: "long",
@@ -445,7 +441,6 @@ export function sanitizeSettings(raw: unknown): Settings {
     autoSendQueued: typeof record["autoSendQueued"] === "boolean" ? record["autoSendQueued"] : DEFAULT_SETTINGS.autoSendQueued,
     showThinking: typeof record["showThinking"] === "boolean" ? record["showThinking"] : DEFAULT_SETTINGS.showThinking,
     keepScreenOn: typeof record["keepScreenOn"] === "boolean" ? record["keepScreenOn"] : DEFAULT_SETTINGS.keepScreenOn,
-    language: LANGUAGE_SETTINGS.includes(record["language"] as LanguageSetting) ? record["language"] as LanguageSetting : DEFAULT_SETTINGS.language,
     alertsOn: typeof record["alertsOn"] === "boolean" ? record["alertsOn"] : DEFAULT_SETTINGS.alertsOn,
     alertInput: typeof record["alertInput"] === "boolean" ? record["alertInput"] : DEFAULT_SETTINGS.alertInput,
     alertDone: record["alertDone"] === "off" || record["alertDone"] === "long" || record["alertDone"] === "always" ? record["alertDone"] : DEFAULT_SETTINGS.alertDone,
@@ -525,9 +520,9 @@ const THEME_COLOR: Record<Palette, Record<ResolvedTheme, string>> = {
   catppuccin: { dark: "#181825", light: "#e6e9ef" },
 };
 
-function applyToDocument(settings: Settings, resolved: ResolvedTheme, palette: Palette, language: Language): void {
+function applyToDocument(settings: Settings, resolved: ResolvedTheme, palette: Palette): void {
   const root = document.documentElement;
-  root.lang = LOCALE_TAGS[language];
+  root.lang = LOCALE;
   root.dataset["theme"] = resolved;
   root.dataset["density"] = settings.density;
   root.dataset["palette"] = palette;
@@ -554,8 +549,6 @@ interface SettingsContextValue {
   resolvedTheme: ResolvedTheme;
   /** the palette drawn now: `settings.palette`, or in System mode the Light or Dark one (lib/paletteFor.ts) */
   resolvedPalette: Palette;
-  /** the language after resolving `system` against the browser's */
-  resolvedLanguage: Language;
   update: (patch: Partial<Settings>) => void;
 }
 
@@ -577,28 +570,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const resolvedPalette = paletteFor(settings, resolvedTheme);
 
-  const [browserLanguages, setBrowserLanguages] = useState<readonly string[]>(() => (typeof navigator !== "undefined" ? navigator.languages : []));
   useEffect(() => {
-    const onChange = (): void => setBrowserLanguages([...navigator.languages]);
-    window.addEventListener("languagechange", onChange);
-    return () => window.removeEventListener("languagechange", onChange);
-  }, []);
-  const requestedLanguage = resolveLanguage(settings.language, browserLanguages);
-  // a language is drawn once its dictionary is in: until then the UI keeps the language it has
-  const [, dictionaryLoaded] = useReducer((count: number) => count + 1, 0);
-  useEffect(() => {
-    if (isLanguageLoaded(requestedLanguage)) return;
-    let live = true;
-    void loadLanguage(requestedLanguage).then(() => { if (live) dictionaryLoaded(); });
-    return () => { live = false; };
-  }, [requestedLanguage]);
-  const resolvedLanguage = isLanguageLoaded(requestedLanguage) ? requestedLanguage : currentLanguage();
-  // helpers outside React read this during the same render, so it is set before the children render
-  setCurrentLanguage(resolvedLanguage);
-
-  useEffect(() => {
-    applyToDocument(settings, resolvedTheme, resolvedPalette, resolvedLanguage);
-  }, [settings, resolvedTheme, resolvedPalette, resolvedLanguage]);
+    applyToDocument(settings, resolvedTheme, resolvedPalette);
+  }, [settings, resolvedTheme, resolvedPalette]);
 
   const update = useCallback((patch: Partial<Settings>) => {
     setSettings((current) => {
@@ -608,7 +582,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const value = useMemo(() => ({ settings, resolvedTheme, resolvedPalette, resolvedLanguage, update }), [settings, resolvedTheme, resolvedPalette, resolvedLanguage, update]);
+  const value = useMemo(() => ({ settings, resolvedTheme, resolvedPalette, update }), [settings, resolvedTheme, resolvedPalette, update]);
   return createElement(SettingsContext.Provider, { value }, children);
 }
 

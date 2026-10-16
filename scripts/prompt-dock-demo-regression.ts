@@ -229,7 +229,7 @@ try {
         throw error;
       };
       let evidenceSequence = 0;
-      const open = async ({ width, height, touch = false, finePointer = false, held = [], prompt = null, theme = "dark", language = "en", settings = {} }: { width: number; height: number; touch?: boolean; finePointer?: boolean; held?: string[]; prompt?: unknown; theme?: string; language?: string; settings?: Record<string, unknown> }): Promise<Opened> => {
+      const open = async ({ width, height, touch = false, finePointer = false, held = [], prompt = null, theme = "dark", settings = {} }: { width: number; height: number; touch?: boolean; finePointer?: boolean; held?: string[]; prompt?: unknown; theme?: string; settings?: Record<string, unknown> }): Promise<Opened> => {
         const context = await browser.newContext({ viewport: { width, height }, locale: "en-US", hasTouch: touch, isMobile: touch && !finePointer });
         // a laptop with a touch screen: Chromium calls any screen with touch a coarse pointer, and
         // such a laptop's mouse is its first one. The app asks through matchMedia (useMediaQuery)
@@ -240,7 +240,7 @@ try {
         await context.addInitScript(([owner, messages, settings]) => {
           localStorage.setItem("herdr-web-ui:settings", settings!);
           if (messages !== "") localStorage.setItem(`herdr-web-ui:queue:${owner}`, messages!);
-        }, [panes.web, held.length === 0 ? "" : JSON.stringify({ version: 1, messages: held.map((text, at) => ({ id: `m${at}`, text })) }), JSON.stringify({ language, theme, ...settings })] as const);
+        }, [panes.web, held.length === 0 ? "" : JSON.stringify({ version: 1, messages: held.map((text, at) => ({ id: `m${at}`, text })) }), JSON.stringify({ theme, ...settings })] as const);
         // a soft keyboard the script can raise: lib/viewport.ts reads navigator.virtualKeyboard
         if (touch) await context.addInitScript(() => {
           const keyboard = Object.assign(new EventTarget(), { height: 0 });
@@ -254,7 +254,7 @@ try {
           tracing: browserEvidenceTracing(context),
           directory: evidenceDirectory,
           script: "prompt-dock-demo-regression",
-          scenario: `page-${++evidenceSequence}-${width}x${height}-${theme}-${language}`,
+          scenario: `page-${++evidenceSequence}-${width}x${height}-${theme}`,
           trace: evidenceTrace,
         }) : undefined;
         if (evidence) evidenceByPage.set(page, evidence);
@@ -876,15 +876,13 @@ try {
         console.log("PASS with a coarse pointer a key (Enter, Space, the card's field) or a mouse press hands the focus to the message box and never leaves it on the page; a tap, an unnamed click or a tap misnamed a mouse does not");
       }
 
-      for (const language of ["ko", "ja", "zh"]) {
-        // the translated placeholders fit the phone's message box on one line too
-        const { page, close } = await open({ width: 390, height: 844, touch: true, prompt: PLAN, language });
-        try {
-          const fit = await page.evaluate(() => { const box = document.querySelector<HTMLTextAreaElement>(".composer-text")!; const probe = document.createElement("span"); probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${getComputedStyle(box).font}`; probe.textContent = box.placeholder; document.body.append(probe); const width = probe.getBoundingClientRect().width; probe.remove(); return { text: box.placeholder, width, room: box.clientWidth - parseFloat(getComputedStyle(box).paddingLeft) - parseFloat(getComputedStyle(box).paddingRight) }; });
-          assert.ok(fit.width <= fit.room, `${language}: "${fit.text}" is ${fit.width}px in ${fit.room}px`);
-        } catch (error) { await preserveFailure(page, error); } finally { await close(); }
-      }
-      console.log("PASS the placeholder with a custom answer fits a 390px message box in ko, ja and zh");
+      // the placeholder with a custom answer fits the phone's message box on one line
+      const { page, close } = await open({ width: 390, height: 844, touch: true, prompt: PLAN });
+      try {
+        const fit = await page.evaluate(() => { const box = document.querySelector<HTMLTextAreaElement>(".composer-text")!; const probe = document.createElement("span"); probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${getComputedStyle(box).font}`; probe.textContent = box.placeholder; document.body.append(probe); const width = probe.getBoundingClientRect().width; probe.remove(); return { text: box.placeholder, width, room: box.clientWidth - parseFloat(getComputedStyle(box).paddingLeft) - parseFloat(getComputedStyle(box).paddingRight) }; });
+        assert.ok(fit.width <= fit.room, `"${fit.text}" is ${fit.width}px in ${fit.room}px`);
+      } catch (error) { await preserveFailure(page, error); } finally { await close(); }
+      console.log("PASS the placeholder with a custom answer fits a 390px message box");
     } finally { await browser.close(); }
   } finally { server.stop(); }
 } finally { rmSync(app, { recursive: true, force: true }); }

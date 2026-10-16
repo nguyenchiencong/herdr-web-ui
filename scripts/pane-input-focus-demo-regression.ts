@@ -33,7 +33,7 @@ try {
         try {
           await context.addInitScript(() => {
             Object.defineProperty(navigator, "platform", { configurable: true, value: "iPad" });
-            if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", terminalInputMode: "line", alertsOn: false,
+            if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ defaultView: "chat", terminalInputMode: "line", alertsOn: false,
               shortcutOverrides: { "previous-pane": "1", "next-pane": "2" } }));
           });
           const page = await context.newPage();

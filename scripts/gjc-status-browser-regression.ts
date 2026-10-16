@@ -177,7 +177,7 @@ console.log(JSON.stringify({ type: "broker_response", ok: true, result: {
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   await context.addInitScript((ids) => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", quietOpenedDone: false }));
+    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ quietOpenedDone: false }));
     for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
   }, [paneId, delayedPaneId]);
   page = await context.newPage();

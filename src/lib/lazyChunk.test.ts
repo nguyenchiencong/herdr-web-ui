@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { lazyChunk, lazyChunkFailed, onLazyChunkFailure, settleWithin, watchPreloadErrors, whenIdle } from "./lazyChunk.ts";
+import { lazyChunk, lazyChunkFailed, onLazyChunkFailure, watchPreloadErrors, whenIdle } from "./lazyChunk.ts";
 
 /** Puts a global back as it was, removing it when the test is what added it. */
 function restoreGlobal(name: string, value: unknown): void {
@@ -89,14 +89,6 @@ describe("lazyChunk", () => {
   });
 });
 
-describe("settleWithin", () => {
-  it("resolves when the work settles (a failed one too), and when the time runs out where it never does", async () => {
-    await settleWithin(Promise.resolve("loaded"), 60_000);
-    await settleWithin(Promise.reject(new Error("failed")), 60_000);
-    await settleWithin(new Promise<never>(() => {}), 5);
-  });
-});
-
 describe("whenIdle", () => {
   it("runs at the browser's idle time within its timeout, and a cancel is handed to the browser", () => {
     const host = globalThis as unknown as Record<string, unknown>;
@@ -140,7 +132,8 @@ describe("whenIdle", () => {
         cancelledRan = true;
       }, 5);
       cancel();
-      await settleWithin(new Promise<never>(() => {}), 30);
+      // fixed wait: a cancelled callback must not run in this time
+      await new Promise((resolve) => setTimeout(resolve, 30));
       expect(cancelledRan).toBe(false);
     } finally {
       restoreGlobal("requestIdleCallback", saved);

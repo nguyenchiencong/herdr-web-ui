@@ -67,7 +67,7 @@ try {
   const page = await context.newPage();
   // a pane opens its terminal the first time; this QA is about the chat lens
   await page.addInitScript((id) => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
     localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
   }, paneId);
   const errors: string[] = [];

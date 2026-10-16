@@ -188,12 +188,12 @@ describe("voice transcribe", () => {
     expect(await response.json()).toMatchObject({ error: { code: "invalid_audio" } });
   });
 
-  it("asks for the speaker's language and English, Korean when the client names none", async () => {
+  it("asks for the speaker's language and English, English when the client names none", async () => {
     const asked: string[][] = [];
     handler = async (_url, init) => { asked.push((init.body as FormData).getAll("languages[]") as string[]); return transcriptAnswer(); };
     const voice = service({ HERDR_WEB_OPENAI_API_KEY: KEY });
     for (const language of ["ja", "zh", "en", undefined]) await events(await transcribe(voice, clipForm({ language })));
-    expect(asked).toEqual([["ja", "en"], ["zh", "en"], ["en"], ["ko", "en"]]);
+    expect(asked).toEqual([["ja", "en"], ["zh", "en"], ["en"], ["en"]]);
     const bad = await transcribe(voice, clipForm({ language: "japanese" }));
     expect(bad.status).toBe(400);
     expect(await bad.json()).toMatchObject({ error: { code: "invalid_request" } });
@@ -223,7 +223,7 @@ describe("voice transcribe", () => {
     const form = request!.init.body as FormData;
     expect(form.get("model")).toBe("gpt-transcribe");
     expect(form.get("stream")).toBe("true");
-    expect(form.getAll("languages[]")).toEqual(["ko", "en"]);
+    expect(form.getAll("languages[]")).toEqual(["en"]);
     expect(form.getAll("keywords[]")).toEqual(["git", "server/voice.ts"]);
     expect(form.get("prompt")).toBe("Dictation of a shell command line typed into a terminal");
     expect((form.get("file") as File).name).toBe("audio.webm");

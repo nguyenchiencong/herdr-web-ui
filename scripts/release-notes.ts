@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { releaseSummaries, SUMMARIES_FILE } from "../server/release-notes.ts";
-import { SUMMARY_GROUPS, SUMMARY_LANGUAGES, type SummaryGroup } from "../shared/update.ts";
+import { SUMMARY_GROUPS, type SummaryGroup } from "../shared/update.ts";
 import { FRAGMENTS_DIR, fragmentFiles } from "./changelog-fold.ts";
 
 /** The GitHub release's headings for the patch-note lists, in SUMMARY_GROUPS order. */
@@ -8,7 +8,7 @@ const GROUP_HEADINGS: Record<SummaryGroup, string> = { new: "New features", impr
 
 /**
  * Fail before publishing a tag: all three version sources and nonempty notes must agree, and the
- * release must be told as patch notes in every language of the app (release-summaries.json),
+ * release must be told as patch notes in English (release-summaries.json),
  * which is what an install shows of it.
  * The GitHub release reads as an install shows it: the English patch-note lists (a list with no
  * line left out), then the whole CHANGELOG section folded under them.
@@ -29,11 +29,10 @@ export function releaseNotes(version: string, packageVersion: string, manifest: 
   const notes = matching[0]!.split("\n").slice(1).filter((line) => !/^\[[^\]]+\]: /.test(line)).join("\n").trim();
   if (!notes) throw new Error("Release notes are empty");
   const summary = releaseSummaries(summaries).get(version);
-  const untold = SUMMARY_LANGUAGES.filter((language) => !summary?.[language]);
-  if (untold.length > 0) throw new Error(`${SUMMARIES_FILE} must tell this version in: ${untold.join(", ")}`);
-  const lines = SUMMARY_LANGUAGES.flatMap((language) => SUMMARY_GROUPS.flatMap((group) => summary![language]![group] ?? []));
+  if (!summary?.en) throw new Error(`${SUMMARIES_FILE} must tell this version in English`);
+  const english = summary.en;
+  const lines = SUMMARY_GROUPS.flatMap((group) => english[group] ?? []);
   if (lines.some((line) => /[\r\n]/.test(line))) throw new Error(`${SUMMARIES_FILE} lines must each be one line`);
-  const english = summary!.en!;
   const lists = SUMMARY_GROUPS.flatMap((group) => {
     const written = english[group];
     // plain text, as the app shows it: no `<` may open a tag or a comment that hides the fold

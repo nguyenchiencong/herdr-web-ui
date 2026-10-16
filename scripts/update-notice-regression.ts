@@ -13,7 +13,7 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
     await context.addInitScript(() => {
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
     });
     const page = await context.newPage();
     const errors: string[] = [];

@@ -3,7 +3,7 @@ import { releaseNotes } from "./release-notes.ts";
 
 const manifest = 'name = "herdr-web-ui"\nversion = "1.2.3"\n';
 const changelog = '# Changelog\n\n## [Unreleased]\nFuture\n\n## [1.2.3] — today\n\n- Fixed input.\n\n## [1.2.2]\nOld\n\n[1.2.3]: https://example.com\n';
-const told = { en: { fixed: ["Input."] }, ko: { fixed: ["입력."] }, ja: { fixed: ["入力。"] }, zh: { fixed: ["输入。"] }, tr: { fixed: ["Girdi."] } };
+const told = { en: { fixed: ["Input."] } };
 const summaries = JSON.stringify({ "1.2.3": told, "1.2.2": { en: { fixed: ["Old."] } } });
 test("release notes belong only to the exact requested version", () => {
   expect(releaseNotes("1.2.3", "1.2.3", manifest, changelog, summaries)).toBe(
@@ -11,21 +11,21 @@ test("release notes belong only to the exact requested version", () => {
 });
 test("release notes are the English patch-note lists in order, then the changelog section folded", () => {
   const en = { fixed: [" Crash. ", "Hang."], new: ["Cards."], improved: ["Speed."] };
-  const all = JSON.stringify({ "1.2.3": { ...told, en } });
+  const all = JSON.stringify({ "1.2.3": { en } });
   expect(releaseNotes("1.2.3", "1.2.3", manifest, changelog, all)).toBe([
     "### New features\n\n- Cards.",
     "### Improvements\n\n- Speed.",
     "### Bug fixes\n\n- Crash.\n- Hang.",
     "<details><summary>Full changelog</summary>\n\n- Fixed input.\n\n</details>",
   ].join("\n\n"));
-  const empty = JSON.stringify({ "1.2.3": { ...told, en: { new: [], improved: ["Speed."] } } });
+  const empty = JSON.stringify({ "1.2.3": { en: { new: [], improved: ["Speed."] } } });
   expect(releaseNotes("1.2.3", "1.2.3", manifest, changelog, empty)).toStartWith("### Improvements\n\n- Speed.\n\n<details>");
 });
 test("a summary line stays one line of text: no break and no tag can hide the changelog fold", () => {
-  const tagged = JSON.stringify({ "1.2.3": { ...told, en: { fixed: ["Copy <!-- markers."] } } });
+  const tagged = JSON.stringify({ "1.2.3": { en: { fixed: ["Copy <!-- markers."] } } });
   expect(releaseNotes("1.2.3", "1.2.3", manifest, changelog, tagged)).toStartWith("### Bug fixes\n\n- Copy &lt;!-- markers.\n\n<details>");
-  for (const ja of ["入力。\n\n<!--", "入\r力。"]) {
-    expect(() => releaseNotes("1.2.3", "1.2.3", manifest, changelog, JSON.stringify({ "1.2.3": { ...told, ja: { fixed: [ja] } } }))).toThrow("one line");
+  for (const line of ["Input.\n\n<!--", "Inp\rut."]) {
+    expect(() => releaseNotes("1.2.3", "1.2.3", manifest, changelog, JSON.stringify({ "1.2.3": { en: { fixed: [line] } } }))).toThrow("one line");
   }
 });
 test("invalid versions and mismatched metadata cannot be released", () => {
@@ -40,10 +40,8 @@ test("missing, prefix-matched, duplicate and empty notes cannot be released", ()
     expect(() => releaseNotes("1.2.3", "1.2.3", manifest, text, summaries)).toThrow();
   }
 });
-test("a release that is not told in every language of the app cannot be released", () => {
-  const { zh: _zh, ...three } = told;
-  for (const text of ["", "{}", JSON.stringify({ "1.2.2": told }), JSON.stringify({ "1.2.3": three }), JSON.stringify({ "1.2.3": { ...told, ja: { fixed: ["  "] } } }), JSON.stringify({ "1.2.3": { ...told, ja: "入力。" } })]) {
+test("a release that is not told in English cannot be released", () => {
+  for (const text of ["", "{}", JSON.stringify({ "1.2.2": told }), JSON.stringify({ "1.2.3": { ko: told.en } }), JSON.stringify({ "1.2.3": { en: { fixed: ["  "] } } }), JSON.stringify({ "1.2.3": { en: "Input." } })]) {
     expect(() => releaseNotes("1.2.3", "1.2.3", manifest, changelog, text)).toThrow("release-summaries.json");
   }
-  expect(() => releaseNotes("1.2.3", "1.2.3", manifest, changelog, JSON.stringify({ "1.2.3": three }))).toThrow("zh");
 });

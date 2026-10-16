@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createDayStore, localDayKey, msUntilNextLocalMidnight, type DayClock } from "./localDay.ts";
 import { formatChatTimestamp } from "./chatTimestamp.ts";
-import { translate } from "./i18n.ts";
+import { t } from "./i18n.ts";
 
 /** a fake clock: time moves only by `advance`, which runs the timers that come due on the way */
 function fakeClock(startMs: number) {
@@ -33,7 +33,6 @@ function fakeClock(startMs: number) {
   return { clock, advance, sleep, resume, timers, resumers };
 }
 
-const t = (key: string, vars?: Record<string, string | number>) => translate("en", key, vars);
 const MIN = 60_000;
 
 describe("localDayKey / msUntilNextLocalMidnight", () => {

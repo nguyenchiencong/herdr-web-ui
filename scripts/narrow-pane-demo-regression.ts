@@ -78,7 +78,7 @@ try {
     try {
       const context = await browser.newContext({ viewport: { width: 1700, height: 900 }, locale: "en-US" });
       await context.addInitScript(() => {
-        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
       });
       const page = await context.newPage();
       const errors: string[] = [];

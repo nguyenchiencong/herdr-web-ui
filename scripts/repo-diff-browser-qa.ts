@@ -282,7 +282,7 @@ try {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await context.addInitScript((theme) => {
       // once: a reload keeps what the page saved since (the diff layout)
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme }));
+      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ theme }));
       const record = window as unknown as { longTasks: number[] };
       record.longTasks = [];
       new PerformanceObserver((list) => { for (const entry of list.getEntries()) record.longTasks.push(entry.duration); }).observe({ type: "longtask" });
@@ -561,7 +561,7 @@ try {
   // a remote PC's repository reads through its bridge, the file too
   {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: "dark" })));
+    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ theme: "dark" })));
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
     await page.goto(origin);
@@ -594,7 +594,7 @@ try {
       return await body.exists() ? new Response(body) : new Response("not found", { status: 404 });
     } });
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: "dark" })));
+    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ theme: "dark" })));
     const page = await context.newPage();
     page.setDefaultTimeout(20_000);
     const missing: string[] = [];

@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { formatChatTimestamp } from "./chatTimestamp.ts";
-import { translate } from "./i18n.ts";
+import { t } from "./i18n.ts";
 
-const t = (key: string, vars?: Record<string, string | number>) => translate("en", key, vars);
 const now = new Date(2026, 9, 13, 15, 0).getTime();
 const at = (y: number, m: number, d: number, h: number, min: number) => new Date(y, m, d, h, min).toISOString();
 const label = (ts: string | null) => formatChatTimestamp(ts, now, "en-US", t)?.label;

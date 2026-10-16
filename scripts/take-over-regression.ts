@@ -22,7 +22,7 @@ export async function checkTakeOver(browser: Browser, origin: string): Promise<v
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
   try {
     await context.addInitScript(() => {
-      if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
       // what this page's socket was told, to wait on the server's answers
       const frames: string[] = [];
       Object.assign(window, { takenText_: false });

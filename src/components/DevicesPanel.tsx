@@ -8,7 +8,7 @@ import { copyText } from "../lib/clipboard.ts";
 import { deviceLabel } from "../lib/phone.ts";
 import type { HealthAuth, PairedDevice, PairingCode } from "../../shared/protocol.ts";
 import { QrCode } from "./QrCode.tsx";
-import { currentLocale, t as tt, useT } from "../lib/i18n.ts";
+import { LOCALE, t as tt, useT } from "../lib/i18n.ts";
 
 const POLL_MS = 3000;
 
@@ -35,7 +35,7 @@ function lastSeen(value: string | null): string {
   if (minutes < 2) return tt("just now");
   if (minutes < 60) return tt("{n} min ago", { n: minutes });
   if (minutes < 60 * 48) return tt("{n} h ago", { n: Math.round(minutes / 60) });
-  return new Date(value).toLocaleDateString(currentLocale());
+  return new Date(value).toLocaleDateString(LOCALE);
 }
 
 /** Settings → Devices: the paired devices, and a code to pair one more. */

@@ -39,10 +39,9 @@ function phone(name: string, still: string) {
 desk("chat-folded", "01-desktop-chat-claude.png", 1920, 1200);
 desk("chat-worked-open", "02-desktop-chat-worked-open.png", 1920, 1200);
 desk("chat-todo", "03-desktop-todo-open.png", 1920, 1200);
-// theme/language strip: the window's top-left corner (title, sidebar, statuses), near 1:1
+// theme strip: the window's top-left corner (title, sidebar, statuses), near 1:1
 desk("strip-dark", "01-desktop-chat-claude.png", 920, 576, "920:576:0:0");
 desk("strip-light", "10-desktop-chat-light.png", 920, 576, "920:576:0:0");
-desk("strip-korean", "11-desktop-chat-korean.png", 920, 576, "920:576:0:0");
 desk("prompt", "04-desktop-codex-approval.png", 1920, 1200);
 desk("terminal", "07-desktop-terminal.png", 1920, 1200);
 // sidebar: the host row and the five panes

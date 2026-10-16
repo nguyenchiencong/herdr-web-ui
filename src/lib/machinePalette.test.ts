@@ -1,10 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { Machine } from "../../shared/machines.ts";
 import type { HerdrPane, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
-import { translate } from "./i18n.ts";
+import { t } from "./i18n.ts";
 import { availableTarget, groupMachinePanes, loadRecentTargets, rankMachinePanes, recentTargets, rememberTarget, targetKey, RECENT_KEY } from "./machinePalette.ts";
 
-const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
 const pane = (label: string, status = "idle"): HerdrPane => ({ pane_id: "p1", workspace_id: "w1", tab_id: "t1", terminal_id: "term1", revision: 1, focused: false, label, agent_status: status });
 const workspace = (label: string): WorkspaceInfo => ({ workspace_id: "w1", label, active_tab_id: "t1", focused: false, number: 1, pane_count: 1, tab_count: 1, agent_status: "idle" });
 function machine(id: string, name: string, label = "Shell", state: Machine["state"] = "connected"): Machine {

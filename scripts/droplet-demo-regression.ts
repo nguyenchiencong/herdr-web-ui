@@ -39,7 +39,7 @@ try {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
         await context.addInitScript(() => {
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertDone: "always" }));
+          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ alertDone: "always" }));
           const viewport = window.visualViewport!;
           let height = 795;
           Object.defineProperty(viewport, "height", { get: () => height });

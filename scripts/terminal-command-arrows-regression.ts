@@ -20,7 +20,7 @@ export async function checkCommandArrows(browser: Browser, origin: string, paneI
     const context = await browser.newContext({ viewport: { width: 1100, height: 650 } });
     await context.addInitScript(({ platform, paneId }) => {
       Object.defineProperty(navigator, "platform", { get: () => platform });
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
       localStorage.setItem(`herdr-web-ui:view:${paneId}`, "terminal");
     }, { platform, paneId });
     try {

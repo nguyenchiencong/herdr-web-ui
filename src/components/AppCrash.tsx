@@ -14,8 +14,8 @@ export function crashDetails(error: unknown): string {
 
 /**
  * What the page shows when a render error reached the top of the tree (main.tsx). It sits
- * outside SettingsProvider, which may be what threw, so it reads the module-level `t` (the
- * language last set, English before any) and never a context. An installed web app has no
+ * outside SettingsProvider, which may be what threw, so it reads the module-level `t` and never
+ * a context. An installed web app has no
  * browser reload button, so Reload app is the way back.
  */
 export function AppCrash({ error }: { error: unknown }) {

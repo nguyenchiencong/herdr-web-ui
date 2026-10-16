@@ -20,7 +20,7 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
     const page = await context.newPage();
     await page.addInitScript(({ pane, platform }) => {
       Object.defineProperty(navigator, "platform", { get: () => platform });
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: "direct" }));
       localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
     }, { pane, platform });
     const sent: Array<{ pane_id: string; text: string }> = [];

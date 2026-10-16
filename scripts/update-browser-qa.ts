@@ -73,7 +73,7 @@ try {
 
   writeFileSync(join(upstream, "qa-revision.txt"), "second build\n");
   // as a release does: what was unreleased becomes the release's section of the changelog, the
-  // version moves, and the release is told as patch notes (here one line, in one language)
+  // version moves, and the release is told as patch notes (here one line)
   const cut = (version: string, body = "", summary?: string) => {
     writeFileSync(join(upstream, "CHANGELOG.md"),
       readFileSync(join(upstream, "CHANGELOG.md"), "utf8").replace("## [Unreleased]\n", `## [Unreleased]\n\n## [${version}] - 2099-01-01\n${body}`));

@@ -9,7 +9,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchVoiceStatus } from "./api.ts";
-import { LOCALE_TAGS, type Language, type LanguageSetting } from "./i18n.ts";
+import { LOCALE } from "./i18n.ts";
 import { useSettings, type DictationLanguage } from "./settings.ts";
 import {
   VOICE_FORM,
@@ -251,23 +251,22 @@ export function applyDictation(value: string, selection: { start: number; end: n
 }
 
 /**
- * The BCP 47 tag dictation listens for (SpeechRecognition.lang). A chosen one wins. Auto keeps
- * the UI language's locale, except while the UI language follows the browser and the browser's
- * first language is one the UI is not translated into: then that language, so its speaker is
- * not heard as English. Auto accepts two-letter primary subtags supported by both engines,
- * so its displayed language never promises a browser-only choice. A UI language chosen by hand is the speaker's.
+ * The BCP 47 tag dictation listens for (SpeechRecognition.lang). A chosen one wins. Auto is the
+ * browser's first language when it is not English, so its speaker is not heard as English; otherwise
+ * English. Auto accepts two-letter primary subtags supported by both engines, so its displayed
+ * language never promises a browser-only choice.
  */
-export function dictationLocale(setting: DictationLanguage, uiSetting: LanguageSetting, uiLanguage: Language, browserLanguages: readonly string[]): string {
+export function dictationLocale(setting: DictationLanguage, browserLanguages: readonly string[]): string {
   if (setting !== "auto") return setting;
   const browser = browserLanguages[0]?.trim();
-  if (uiSetting === "system" && browser && /^[a-z]{2}(?:-[a-z0-9]{2,8})*$/i.test(browser) && !/^(?:en|ko|ja|zh)(?:-|$)/i.test(browser)) return browser;
-  return LOCALE_TAGS[uiLanguage];
+  if (browser && /^[a-z]{2}(?:-[a-z0-9]{2,8})*$/i.test(browser) && !/^en(?:-|$)/i.test(browser)) return browser;
+  return LOCALE;
 }
 
-/** The transcribe route's language: the tag's ISO 639-1 subtag, or the UI language for a tag without one. */
-export function transcribeLanguage(locale: string, uiLanguage: Language): string {
+/** The transcribe route's language: the tag's ISO 639-1 subtag, or English for a tag without one. */
+export function transcribeLanguage(locale: string): string {
   const primary = locale.split("-")[0]!.toLowerCase();
-  return /^[a-z]{2}$/.test(primary) ? primary : uiLanguage;
+  return /^[a-z]{2}$/.test(primary) ? primary : "en";
 }
 
 /** What the transcribe route accepts: trimmed, at most VOICE_KEYWORDS_MAX, none longer than VOICE_KEYWORD_MAX_CHARS, no blanks or repeats. */
@@ -407,8 +406,8 @@ interface EngineIO {
   setError(error: VoiceError | null): void;
   options(): VoiceInputOptions;
   engine(): VoiceEngine | null;
-  /** the dictation locale (dictationLocale) and the UI language it falls back to */
-  language(): { locale: string; ui: Language };
+  /** the dictation locale (dictationLocale) */
+  locale(): string;
   recorder(): { mimeType: string; extension: string } | null;
   speech(): SpeechRecognitionCtor | null;
 }
@@ -633,7 +632,7 @@ export function createVoiceEngine(io: EngineIO) {
   function beginBrowser(current: Take, Speech: SpeechRecognitionCtor): void {
     const recognition = new Speech();
     current.recognition = recognition;
-    recognition.lang = io.language().locale;
+    recognition.lang = io.locale();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.onaudiostart = () => { if (take === current && phase === "starting") markRecording(current, performance.now()); };
@@ -687,8 +686,7 @@ export function createVoiceEngine(io: EngineIO) {
     form.append(VOICE_FORM.mode, options.mode);
     form.append(VOICE_FORM.polish, options.polish ? "1" : "0");
     form.append(VOICE_FORM.keywords, JSON.stringify(voiceKeywords(options.keywords?.() ?? [])));
-    const language = io.language();
-    form.append(VOICE_FORM.language, transcribeLanguage(language.locale, language.ui));
+    form.append(VOICE_FORM.language, transcribeLanguage(io.locale()));
     try {
       const response = await fetch("/api/voice/transcribe", { method: "POST", body: form, credentials: "same-origin", signal });
       if (!response.ok || !response.body) {
@@ -843,7 +841,7 @@ export function createVoiceEngine(io: EngineIO) {
 }
 
 export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
-  const { settings, resolvedLanguage } = useSettings();
+  const { settings } = useSettings();
   const status = useVoiceStatus(options.enabled);
   const mime = useMemo(recorderMime, []);
   const Speech = useMemo(speechRecognitionCtor, []);
@@ -864,9 +862,9 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   const [error, setError] = useState<VoiceError | null>(null);
 
   const browserLanguages = typeof navigator !== "undefined" ? navigator.languages : [];
-  const language = { locale: dictationLocale(settings.voiceLanguage, settings.language, resolvedLanguage, browserLanguages), ui: resolvedLanguage };
-  const latest = useRef({ options, engine, language });
-  latest.current = { options, engine, language };
+  const locale = dictationLocale(settings.voiceLanguage, browserLanguages);
+  const latest = useRef({ options, engine, locale });
+  latest.current = { options, engine, locale };
 
   const [voice] = useState(() => createVoiceEngine({
     setState,
@@ -875,7 +873,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
     setError,
     options: () => latest.current.options,
     engine: () => latest.current.engine,
-    language: () => latest.current.language,
+    locale: () => latest.current.locale,
     recorder: () => mime,
     speech: () => Speech,
   }));

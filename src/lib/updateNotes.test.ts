@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { readInstalledNotes, readUpdateNotes, RELEASES_LIMIT, SUMMARY_LANGUAGES, type InstalledNotes, type UpdateNotes } from "../../shared/update.ts";
+import { readInstalledNotes, readUpdateNotes, RELEASES_LIMIT, type InstalledNotes, type UpdateNotes } from "../../shared/update.ts";
 import { ApiError } from "./api.ts";
-import { LANGUAGE_SETTINGS } from "./i18n.ts";
 import { ANNOUNCED_FOR_MS, announcesUpdate, installedUpdate, notesOffer, notesRetryDelay, notesUnboundDelay, offeredNotes, reloadReason, SKEW_ALLOWANCE_MS, summaryFor } from "./updateNotes.ts";
 
 describe("the bounds of a read answer", () => {
@@ -123,23 +122,18 @@ describe("notes as they arrive", () => {
 });
 
 describe("a release's summary", () => {
-  const summary = { en: { new: ["A thing."] }, ko: { new: ["기능 하나."] } };
+  const summary = { en: { new: ["A thing."] } };
 
-  it("is told in the app's language, else in English", () => {
-    expect(summaryFor({ summary }, "ko")).toEqual({ new: ["기능 하나."] });
-    expect(summaryFor({ summary }, "ja")).toEqual({ new: ["A thing."] });
+  it("is told in English", () => {
+    expect(summaryFor({ summary })).toEqual({ new: ["A thing."] });
   });
 
   it("is none for a release that wrote none: its changelog section is what there is", () => {
-    expect(summaryFor({}, "ko")).toBeNull();
-    expect(summaryFor({ summary: { ko: { new: ["기능 하나."] } } }, "ja")).toBeNull();
+    expect(summaryFor({})).toBeNull();
+    expect(summaryFor({ summary: {} })).toBeNull();
   });
 
-  it("is written in the languages the app has", () => {
-    expect([...SUMMARY_LANGUAGES].sort()).toEqual(LANGUAGE_SETTINGS.filter((language) => language !== "system").sort());
-  });
-
-  it("arrives with its release, and without what is not a line under a list of such a language", () => {
+  it("arrives with its release, and without what is not a line under a list in English", () => {
     const sent = { revision: "b".repeat(40), omitted: 0, releases: [
       { version: "0.4.0", date: null, notes: "text", summary: { en: { new: ["A thing.", 7, " "], fixed: "A fix." }, ko: 7, fr: { new: ["Une chose."] }, ja: { new: [] } } },
       { version: "0.3.9", date: null, notes: "text", summary: "short" },

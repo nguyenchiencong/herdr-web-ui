@@ -24,7 +24,7 @@ async function open(browser: Browser, search: string, { phone = false, clipboard
   const context = await browser.newContext(phone
     ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" }
     : { viewport: { width: 1280, height: 800 }, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
   // a plain-HTTP LAN address: no clipboard API, and the old copy command refused too
   if (clipboardRefused) await context.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });

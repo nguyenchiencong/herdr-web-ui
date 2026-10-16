@@ -78,18 +78,18 @@ export const CHATS: Record<string, { turns: ConversationTurn[]; metadata: { mode
       // OmO's background tasks: the call that starts them, then what OmO reports when they end
       { role: "assistant" as const, ts: t(0, 5), end_ts: t(0, 9), parts: [
         { kind: "text" as const, text: "I'll hand two checks to background tasks and proofread meanwhile." },
-        tool("task", "Find pages that still say v0.2 · Translate the FAQ to Korean", { run_in_background: true, tasks: [
+        tool("task", "Find pages that still say v0.2 · Check the FAQ links", { run_in_background: true, tasks: [
           { task_summary: "Find pages that still say v0.2", category: "quick", prompt: "List every page under docs/ that still names v0.2, with file and line." },
-          { task_summary: "Translate the FAQ to Korean", category: "writing", prompt: "Translate docs/faq.md to Korean, keeping the terms in docs/i18n/glossary.ko.json." },
+          { task_summary: "Check the FAQ links", category: "writing", prompt: "Check every link in docs/faq.md and list the ones that do not resolve." },
         ] }, "Batch running.\n1. st_demo3 (running)\n2. st_demo4 (running)"),
       ] },
       { role: "user" as const, ts: t(4), parts: [{ kind: "task_result" as const, tasks: [
         { id: "st_demo3", title: "Find pages that still say v0.2", agent: "quick", model: "Claude Haiku 4.5", status: "completed" as const, duration_ms: 241_000, turns: 9, tool_calls: 33, tokens: 61_200,
           result: "**3 pages** still say v0.2:\n\n- line 12 of `docs/guide/install.md`: the `curl` line downloads `v0.2/install.sh`\n- lines 4 and 31 of `docs/guide/upgrade.md`\n- line 88 of `docs/faq.md`\n\nEvery other page names v0.3." },
-        { id: "st_demo4", title: "Translate the FAQ to Korean", agent: "writing", model: "GPT-6.1", status: "failed" as const, duration_ms: 236_000, turns: 3, tool_calls: 5, tokens: 12_000,
-          result: "The glossary `docs/i18n/glossary.ko.json` is missing, so the terms could not be kept consistent. Nothing was written." },
+        { id: "st_demo4", title: "Check the FAQ links", agent: "writing", model: "GPT-6.1", status: "failed" as const, duration_ms: 236_000, turns: 3, tool_calls: 5, tokens: 12_000,
+          result: "The link list `docs/faq-links.json` is missing, so the links could not be checked. Nothing was written." },
       ] }] },
-      { role: "assistant" as const, ts: t(4, 3), parts: [{ kind: "text" as const, text: "Fixed 6 typos and one broken link, and moved the three v0.2 pages to v0.3. The Korean FAQ needs a glossary first: shall I start `docs/i18n/glossary.ko.json` from the English one?" }] },
+      { role: "assistant" as const, ts: t(4, 3), parts: [{ kind: "text" as const, text: "Fixed 6 typos and one broken link, and moved the three v0.2 pages to v0.3. The FAQ link check needs a link list first: shall I start `docs/faq-links.json` from the links in the guide?" }] },
     ],
   },
   // pi's session as server/fixtures/pi-harness/orchestration.jsonl parses (its README): subagents, background

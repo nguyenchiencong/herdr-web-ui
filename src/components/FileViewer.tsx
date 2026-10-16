@@ -18,7 +18,7 @@ import { copyText, selectContents } from "../lib/clipboard.ts";
 import { fileLineTarget, pathParts } from "../lib/filePaths.ts";
 import { lineRequest, readBudget, shownSource, sourceLayout, virtualHighlightable } from "../lib/sourcePreview.ts";
 import { canHighlight, countLines, languageForPath, normalizeCode } from "../lib/highlight.ts";
-import { useLocale, useT } from "../lib/i18n.ts";
+import { LOCALE, useT } from "../lib/i18n.ts";
 import { MAX_INLINE_IMAGE_BYTES, markdownImagePreview } from "../lib/markdownImages.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import type { MarkdownBlock } from "../lib/markdown.ts";
@@ -112,7 +112,6 @@ function selectSource(element: HTMLElement): void {
  */
 export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActive = true, page = false }: FileViewerProps) {
   const t = useT();
-  const locale = useLocale();
   const { fetchFileInfo, fileUrl, fetchDirectories } = useMachineApi();
   // a remote PC's bridge reads a relative folder from the pane's folder only from its next bundle
   // on; until then it would list the bridge's own folder, so only an absolute or ~/ one is listed there
@@ -130,7 +129,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const surface = useFocusTrap<HTMLElement>(!page);
   // Settings → Chat width, Default: the Preview is as wide as the chat of the pane that opened it
   useOpeningPaneLane(surface, paneId === null ? null : paneStorageId(machineId, paneId));
-  // a kind, not a message: it is said in the language of the moment it shows
+  // a kind, not a message: the message is said when it shows
   const [error, setError] = useState<"missing" | "unreadable" | null>(null);
   const [loaded, setLoaded] = useState<FilePreviewText | null>(null);
   // a line reference defaults to Code; otherwise Preview. A new path never paints the old choice.
@@ -261,7 +260,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const notes = [
     requestNotice,
     cutShort && (loaded.truncatedBy === "lines"
-      ? t("Showing the first {count} lines of this file. Download it to read the rest.", { count: SOURCE_PREVIEW_LINES.toLocaleString(locale) })
+      ? t("Showing the first {count} lines of this file. Download it to read the rest.", { count: SOURCE_PREVIEW_LINES.toLocaleString(LOCALE) })
       : cutBytes !== null
         ? t("Showing the first {shown} of {total}.", { shown: formatBytes(cutBytes.shown), total: formatBytes(cutBytes.total) })
         : t("Only part of this file is shown. Download it to read the rest.")),

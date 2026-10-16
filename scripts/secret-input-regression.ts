@@ -134,7 +134,7 @@ process.stdin.on("data", chunk => {
       for (const mode of ["direct", "line"] as const) {
         const view = await desktop.newPage();
         view.setDefaultTimeout(10_000);
-        await view.addInitScript((mode) => { localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: mode })); }, mode);
+        await view.addInitScript((mode) => { localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: mode })); }, mode);
         await view.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
         await view.locator(".pane-terminal .xterm-screen").waitFor();
         if (mode === "line") await view.getByRole("textbox", { name: "Terminal input line", exact: true }).waitFor();

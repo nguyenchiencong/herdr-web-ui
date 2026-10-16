@@ -31,7 +31,6 @@ const settings: TelemetrySettings = {
   autoSendQueued: false,
   showThinking: true,
   keepScreenOn: false,
-  language: "ko",
   alertsOn: true,
   alertInput: false,
   alertDone: "always",
@@ -110,6 +109,16 @@ describe("telemetry receiver", () => {
     // XX is Cloudflare's "unknown" and T1 its Tor marker: neither is a country, and T1 would say more than one
     for (const cf of [undefined, {}, { country: "Korea" }, { country: "kr" }, { country: 82 }, { country: "XX" }, { country: "T1" }]) expect(requestCountry(from(post("{}"), cf))).toBeNull();
     for (const country of ["US", "KR"]) expect(requestCountry(from(post("{}"), { country }))).toBe(country);
+  });
+
+  test("takes an older sender's snapshot with the UI language it carried, and keeps none of it", async () => {
+    const { env, rows } = fakeDb();
+    for (const language of ["system", "en", "zh", "ja", "ko"]) {
+      expect(readEvent({ ...event, settings: { ...settings, language } }, now)?.settings).toEqual(settings);
+    }
+    expect((await handle(post(JSON.stringify({ ...event, settings: { ...settings, language: "ko" } })), env, now)).status).toBe(204);
+    expect(rows[0]!.values.at(-1)).toBe(JSON.stringify(settings));
+    expect(JSON.stringify(rows)).not.toContain("language");
   });
 
   test("refuses malformed values and unexpected or sensitive snapshot keys without persisting them", async () => {

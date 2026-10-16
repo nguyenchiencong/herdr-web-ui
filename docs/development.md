@@ -329,7 +329,7 @@ in the historical table above.
 - `compose.ts` draws every output frame on a canvas: a backdrop, a browser window or a phone, the frame under an eased camera, and a vector cursor with click ripples or touch rings. It writes `demo-*.mp4` (1920×1200 and 1080×1920, 30 fps) and a GIF of each. Stills get the same window or phone on a transparent background.
 
 The MP4s are not committed: GitHub plays a README video only from an upload (`github.com/user-attachments/…`), so drop them into an issue or PR comment and use the link it gives.
-The website's page is built from this media (the README now shows only its logo and links): it downloads the top video (listed in `scripts/build-site.ts`, `videos`, so a new top video needs its link changed there as well), shows the feature grid's clips linking to their uploads (the same list of links is in `site/index.html` and `site/zh/index.html`), and uses `docs/screenshots/install.png`.
+The website's page is built from this media (the README now shows only its logo and links): it downloads the top video (listed in `scripts/build-site.ts`, `videos`, so a new top video needs its link changed there as well), shows the feature grid's clips linking to their uploads (the same list of links is in `site/index.html`), and uses `docs/screenshots/install.png`.
 The website's feature grid shows a looping ~7-second cut of each feature video (`docs/media/readme/*.webp`, 800×450, 15 fps), each linking to its upload. Cut one with
 `ffmpeg -ss <start> -t <seconds> -i clip.mp4 -vf "fps=15,scale=800:450:force_original_aspect_ratio=increase:flags=lanczos,crop=800:450" -c:v libwebp_anim -loop 0 -quality 72 -compression_level 6 -an out.webp`;
 the scale and crop fill 800×450 from any source aspect. Start on a sharp frame, not mid camera move. The top video stays a GitHub upload so it plays at full quality.
@@ -372,9 +372,7 @@ bun scripts/film/render.ts check                # acceptance frame grabs, sizes,
 ## Website
 
 <https://herdrweb.dev/> is `site/index.html`, a static page with desktop and phone
-demos, a screenshot gallery, supported agents, phone setup and a comparison table. `site/zh/index.html`
-is the same page in Simplified Chinese at `/zh/`, linked from the header; a change to one page belongs in
-the other. `bun run build:site`
+demos, a screenshot gallery, supported agents, phone setup and a comparison table. `bun run build:site`
 assembles it into `_site/` with icons, the social preview and scaled screenshots from `docs/screenshots/`.
 The top video (`readme-hero.mp4`) comes from local `docs/screenshots/readme-hero.mp4` when present, otherwise its GitHub upload;
 ffmpeg creates its poster frame. Without ffmpeg, the page omits unavailable posters.
@@ -419,11 +417,11 @@ after changing the staged session. Files, images, push and remote PCs are not pa
    fragments; then add the `by @login` credits; a fragment merged later must be moved into the
    version by hand, since the release workflow refuses while one is left), and tells the release
    in [release-summaries.json](../release-summaries.json) the way a game's patch notes do: under
-   the version, for each language in `SUMMARY_LANGUAGES` (`shared/update.ts`: `en`, `ko`, `ja` and `zh`), the lists `new`, `improved` and `fixed` (a list with nothing to say is left out), each a few lines of
-   plain text, 90 characters at most, the same number of lines in every language. It is what
+   the version, in English, the lists `new`, `improved` and `fixed` (a list with nothing to say is left out), each a few lines of
+   plain text, 90 characters at most. It is what
    an install shows before and after the update, with the changelog section folded under it,
    so a line names what changes for the people who use the app and leaves out PR numbers and
-   internals. The unit suite and the release workflow fail without every language.
+   internals. The unit suite and the release workflow fail without the English lines.
    The GitHub release is written from the same files by `scripts/release-notes.ts`: the
    English lists under New features, Improvements and Bug fixes, then the version's whole
    changelog section folded under **Full changelog**.

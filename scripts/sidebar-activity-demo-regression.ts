@@ -34,7 +34,7 @@ async function withPage(browser: Browser, settings: object, run: (page: Page) =>
   });
   try {
     await context.addInitScript((stored) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", ...stored }));
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ defaultView: "chat", ...stored }));
     }, settings);
     const page = await context.newPage();
     const errors: string[] = [];

@@ -12,7 +12,7 @@ const LINK_DEFINITION = /^\[[^\]]+\]:\s/;
  * the rest by count. Characters, since it bounds what is read, not what is sent.
  */
 export const NOTES_BUDGET = 48_000;
-/** Where a release tells itself as patch notes, a few short lines per language, beside CHANGELOG.md. */
+/** Where a release tells itself as patch notes, a few short English lines, beside CHANGELOG.md. */
 export const SUMMARIES_FILE = "release-summaries.json";
 
 function triple(version: string): [number, number, number] | null {
@@ -33,9 +33,9 @@ export function compareVersions(a: string, b: string): number | null {
 
 /**
  * release-summaries.json as a release wrote it:
- * `{ "0.3.53": { "en": { "new": ["…"], "improved": ["…"], "fixed": ["…"] }, "ko": { … }, … } }`.
- * It is text from a Git remote, like the changelog: what is not a version with lines in a
- * language the app has is left out, and a file that is not JSON holds no summary.
+ * `{ "0.3.53": { "en": { "new": ["…"], "improved": ["…"], "fixed": ["…"] } } }`.
+ * It is text from a Git remote, like the changelog: what is not a version with English lines is
+ * left out, and a file that is not JSON holds no summary.
  */
 export function releaseSummaries(text: string): Map<string, ReleaseSummary> {
   const found = new Map<string, ReleaseSummary>();

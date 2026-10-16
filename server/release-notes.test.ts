@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { HIGHLIGHT_LIMIT, HIGHLIGHTS_PER_GROUP, RELEASES_LIMIT, SUMMARY_GROUPS, SUMMARY_LANGUAGES } from "../shared/update.ts";
+import { HIGHLIGHT_LIMIT, HIGHLIGHTS_PER_GROUP, RELEASES_LIMIT } from "../shared/update.ts";
 import { compareVersions, releaseNotes, releaseSummaries, SUMMARIES_FILE } from "./release-notes.ts";
 
 const CHANGELOG = `# Changelog
@@ -154,9 +154,6 @@ describe("a release told as patch notes", () => {
   const written = JSON.stringify({
     "0.4.0": {
       en: { new: ["  A new thing.  ", "", 7, "Another."], fixed: ["A fix."], removed: ["Not a list the app has."] },
-      ko: { new: ["새 기능."], improved: [], fixed: "수정." },
-      ja: {},
-      fr: { new: ["Une chose."] },
     },
     "0.3.10": { en: { improved: ["Ten is better."] } },
     "0.3.9": "nine",
@@ -165,9 +162,9 @@ describe("a release told as patch notes", () => {
     "0.3.7": { en: { new: "One line, not a list." } },
   });
 
-  it("reads each release's lines, under the lists and in the languages the app has", () => {
+  it("reads each release's lines, under the lists, in English", () => {
     expect([...releaseSummaries(written)]).toEqual([
-      ["0.4.0", { en: { new: ["A new thing.", "Another."], fixed: ["A fix."] }, ko: { new: ["새 기능."] } }],
+      ["0.4.0", { en: { new: ["A new thing.", "Another."], fixed: ["A fix."] } }],
       ["0.3.10", { en: { improved: ["Ten is better."] } }],
     ]);
   });
@@ -188,7 +185,7 @@ describe("a release told as patch notes", () => {
   it("puts a release's summary beside its notes, and leaves a release without one as it was", () => {
     const notes = releaseNotes(CHANGELOG, "0.3.8", "0.4.0", undefined, releaseSummaries(written));
     expect(notes.releases.map((release) => [release.version, release.summary])).toEqual([
-      ["0.4.0", { en: { new: ["A new thing.", "Another."], fixed: ["A fix."] }, ko: { new: ["새 기능."] } }],
+      ["0.4.0", { en: { new: ["A new thing.", "Another."], fixed: ["A fix."] } }],
       ["0.3.10", { en: { improved: ["Ten is better."] } }],
       ["0.3.9", undefined],
     ]);
@@ -213,24 +210,19 @@ describe("this repository's own summaries", () => {
   /** patch notes are read at a glance: a line longer than this is a sentence from the changelog */
   const LINE = 90;
 
-  it("tells every release since in every language the app has", () => {
-    const missing = released.filter((version) => compareVersions(version, BEFORE)! > 0)
-      .flatMap((version) => SUMMARY_LANGUAGES.filter((language) => !summaries.get(version)?.[language]).map((language) => `${version} ${language}`));
+  it("tells every release since in English", () => {
+    const missing = released.filter((version) => compareVersions(version, BEFORE)! > 0 && !summaries.get(version)?.en);
     expect(missing).toEqual([]);
   });
 
-  it("holds nothing but short lines for releases the changelog names, the same lists in every language", () => {
+  it("holds nothing but short lines for releases the changelog names", () => {
     const raw = JSON.parse(text) as Record<string, Record<string, Record<string, string[]>>>;
     for (const [version, entry] of Object.entries(raw)) {
       expect(released).toContain(version);
-      expect(Object.keys(entry).sort()).toEqual([...SUMMARY_LANGUAGES].sort());
+      expect(Object.keys(entry)).toEqual(["en"]);
       // what was read is what was written: nothing dropped, cut or trimmed
       expect(summaries.get(version) as unknown).toEqual(entry);
-      const shape = (language: string) => SUMMARY_GROUPS.map((group) => entry[language]![group]?.length ?? 0);
-      for (const language of SUMMARY_LANGUAGES) {
-        expect([version, language, shape(language)]).toEqual([version, language, shape("en")]);
-        for (const line of Object.values(entry[language]!).flat()) expect(line.length).toBeLessThanOrEqual(LINE);
-      }
+      for (const line of Object.values(entry.en!).flat()) expect(line.length).toBeLessThanOrEqual(LINE);
     }
   });
 });

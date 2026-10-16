@@ -51,7 +51,7 @@ try {
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), usage: new UsageService(undefined, []) });
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false })));
+  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ defaultView: "chat", alertsOn: false })));
   const page = await context.newPage();
   page.setDefaultTimeout(10_000);
   const errors: string[] = [];

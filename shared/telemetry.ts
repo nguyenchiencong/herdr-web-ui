@@ -51,7 +51,6 @@ export interface TelemetrySettings {
   autoSendQueued: boolean;
   showThinking: boolean;
   keepScreenOn: boolean;
-  language: "system" | "en" | "zh" | "ja" | "ko";
   alertsOn: boolean;
   alertInput: boolean;
   alertDone: "off" | "long" | "always";
@@ -120,7 +119,6 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   autoSendQueued: booleanValue,
   showThinking: booleanValue,
   keepScreenOn: booleanValue,
-  language: oneOf(["system", "en", "zh", "ja", "ko"]),
   alertsOn: booleanValue,
   alertInput: booleanValue,
   alertDone: oneOf(["off", "long", "always"]),
@@ -148,8 +146,19 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   usageOrderCustom: booleanValue,
 } satisfies Record<keyof TelemetrySettings, (value: unknown) => boolean>;
 
+/**
+ * Keys an older sender still puts in its snapshot: checked like the others, and never kept. The UI
+ * language was a setting until the interface became English only.
+ */
+const LEGACY_SETTINGS_VALIDATORS: Record<string, (value: unknown) => boolean> = {
+  language: oneOf(["system", "en", "zh", "ja", "ko"]),
+};
+
 /** Every key the Worker (telemetry/worker.ts) accepts in a snapshot, and requires. */
 export const TELEMETRY_SETTINGS_KEYS = Object.keys(TELEMETRY_SETTINGS_VALIDATORS) as (keyof TelemetrySettings)[];
+
+const isSettingKey = (key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(TELEMETRY_SETTINGS_VALIDATORS, key) || Object.prototype.hasOwnProperty.call(LEGACY_SETTINGS_VALIDATORS, key);
 
 /** Validate the complete snapshot and return a fresh object containing only schema keys. */
 export function telemetrySettings(value: unknown): TelemetrySettings | null {
@@ -159,14 +168,17 @@ export function telemetrySettings(value: unknown): TelemetrySettings | null {
     if (prototype !== Object.prototype && prototype !== null) return null;
 
     const keys = Reflect.ownKeys(value);
-    if (keys.length !== TELEMETRY_SETTINGS_KEYS.length
-      || keys.some((key) => typeof key !== "string" || !Object.prototype.hasOwnProperty.call(TELEMETRY_SETTINGS_VALIDATORS, key))) return null;
+    if (keys.some((key) => typeof key !== "string" || !isSettingKey(key))) return null;
 
     const clean: Record<string, unknown> = {};
     for (const key of TELEMETRY_SETTINGS_KEYS) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (!descriptor || !descriptor.enumerable || !("value" in descriptor) || !TELEMETRY_SETTINGS_VALIDATORS[key](descriptor.value)) return null;
       clean[key] = descriptor.value;
+    }
+    for (const [key, valid] of Object.entries(LEGACY_SETTINGS_VALIDATORS)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor && (!descriptor.enumerable || !("value" in descriptor) || !valid(descriptor.value))) return null;
     }
     return clean as unknown as TelemetrySettings;
   } catch {

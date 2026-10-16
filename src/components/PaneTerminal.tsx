@@ -338,7 +338,7 @@ export function PaneTerminal({
   }, [availableModifiers]);
   const shortcutSettings = useRef(settings.shortcutOverrides);
   shortcutSettings.current = settings.shortcutOverrides;
-  // what the terminal effect says in a banner, in the language chosen since it was set up
+  // what the terminal effect says in a banner; tRef keeps the latest t for it
   const tRef = useRef(t);
   tRef.current = t;
   /** read by the OSC 52 handler, which is attached once for the terminal's life */
@@ -1400,7 +1400,7 @@ export function PaneTerminal({
         // Shortcuts are never retained as offline text or replayed later: a chord the
         // terminal cannot take now (not ready, disconnected) is told, not dropped in silence
         if (!socket.sendKeys(current, [chord])) {
-          const t = tRef.current; // the language of now, not of the attach
+          const t = tRef.current; // the latest t, not the one of the attach
           setInputError(t("Not sent: the terminal is not ready for keys."));
         }
         return;

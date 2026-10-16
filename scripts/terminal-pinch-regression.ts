@@ -22,7 +22,7 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   await context.addInitScript(({ paneId }) => {
     // Keep the size saved by the gesture when this same page reloads.
-    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
     localStorage.setItem(`herdr-web-ui:view:${paneId}`, "terminal");
     const touchWindow = window as Window & { wheels_: number; wheelModes_: number[]; remaining_: number[] };
     touchWindow.wheels_ = 0;

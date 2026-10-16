@@ -58,7 +58,7 @@ async function paneMenu(page: Page, paneId: string): Promise<Locator> {
 
 async function checkDesktop(browser: Browser, origin: string, first: string, second: string, tabId: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
+  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ defaultView: "terminal", alertsOn: false })));
   try {
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
@@ -481,7 +481,7 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
   // Start from a known native focus before checking that a reorder preserves it.
   await paneFocus(first);
   const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
+  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ defaultView: "terminal", alertsOn: false })));
   try {
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
@@ -583,7 +583,7 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
 
 async function checkTouchTablet(browser: Browser, origin: string, first: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, hasTouch: true, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
+  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ defaultView: "terminal", alertsOn: false })));
   try {
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);

@@ -149,11 +149,11 @@ export async function checkChatKeepsTerminalSize(browser: Browser, origin: strin
     const open = (options: Parameters<Browser["newContext"]>[0], settings: object) => openRecording(browser, contexts, origin, paneId, options, settings);
     const sent = (page: Page) => page.evaluate(() => (window as unknown as { frames_: { dir: string; type: string; keep_size?: boolean }[] }).frames_.filter((f) => f.dir === "out" && (f.type === "attach" || f.type === "resize")));
 
-    const desktop = await open({ viewport: { width: 1280, height: 800 } }, { language: "en", defaultView: "terminal" });
+    const desktop = await open({ viewport: { width: 1280, height: 800 } }, { defaultView: "terminal" });
     await attached(desktop);
     const desktopSize = await size();
 
-    const phone = await open({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { language: "en", defaultView: "chat" });
+    const phone = await open({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { defaultView: "chat" });
     await phone.locator(".terminal-stack.is-chat").waitFor({ state: "attached" });
     await attached(phone);
     // the chat lens attaches without driving the grid, and sends no resize of its own
@@ -266,12 +266,12 @@ export async function checkPaneSwitchKeepsTerminalSize(browser: Browser, origin:
     await agentListed(origin, agentPane);
     const size = shellSize(agentPane);
 
-    const desktop = await openRecording(browser, contexts, origin, agentPane, { viewport: { width: 1280, height: 800 } }, { language: "en", defaultView: "terminal" });
+    const desktop = await openRecording(browser, contexts, origin, agentPane, { viewport: { width: 1280, height: 800 } }, { defaultView: "terminal" });
     await attached(desktop);
     const desktopSize = await size();
 
     // with chat as the lens for every pane, a shell still opens in the terminal: it has no conversation
-    const other = await openRecording(browser, contexts, origin, shellPane, { viewport: { width: 900, height: 600 } }, { language: "en", defaultView: "chat" });
+    const other = await openRecording(browser, contexts, origin, shellPane, { viewport: { width: 900, height: 600 } }, { defaultView: "chat" });
     await other.locator(".terminal-stack:not(.is-chat)").waitFor({ state: "attached" });
     await attached(other);
     const before = (await framesOf(other)).length;
@@ -327,7 +327,7 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
     const size = shellSize(paneId);
     const nextSize = shellSize(nextPane);
     // the pause in another window is a setting this check turns on; the first window below keeps the default
-    const open = (options: Parameters<Browser["newContext"]>[0], settings: object = {}) => openRecording(browser, contexts, origin, paneId, options, { language: "en", defaultView: "terminal", releasePaneAway: true, ...settings });
+    const open = (options: Parameters<Browser["newContext"]>[0], settings: object = {}) => openRecording(browser, contexts, origin, paneId, options, { defaultView: "terminal", releasePaneAway: true, ...settings });
     // what the page sent that sizes the grid: attaches and resizes
     const sizing = async (page: Page) => (await framesOf(page)).filter((f) => f.dir === "out" && (f.type === "attach" || f.type === "resize"));
     // a window that let go of its pane still shows it, read-only, through the server's watch
@@ -335,7 +335,7 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
     const watchFrames = async (page: Page) => (await framesOf(page)).filter((f) => f.dir === "in" && f.type === "watch-data").length;
 
     // by default a window out of use keeps its pane: no detach, no paused banner, and the pane's output still arrives
-    const keeping = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 1280, height: 800 } }, { language: "en", defaultView: "terminal" });
+    const keeping = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 1280, height: 800 } }, { defaultView: "terminal" });
     await attached(keeping);
     // freeze timers after the real attach; only the release delay is advanced below
     await pauseClock(keeping);
@@ -359,7 +359,7 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
 
     // a phone put away lets go of the pane at once, with the default settings and no timer run:
     // its page can freeze before one does, and its attach would keep herdr's window at its size
-    const pocket = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { language: "en", defaultView: "terminal" });
+    const pocket = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { defaultView: "terminal" });
     await attached(pocket);
     await pauseClock(pocket);
     const pocketVisibility = (hidden: boolean) => pocket.evaluate((hide) => {
@@ -653,7 +653,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           try { await ready.promise; } finally { clearTimeout(deadline); }
         }
         page = await openRecording(browser, contexts, origin, scenario === "held" ? heldPane : first,
-          { viewport: { width: 1000, height: 700 } }, { language: "en", defaultView: queueScenario ? "chat" : "terminal",
+          { viewport: { width: 1000, height: 700 } }, { defaultView: queueScenario ? "chat" : "terminal",
             releasePaneAway: scenario === "mount-optin" || (!fresh && !reconnect && scenario !== "switch") },
           fresh, setup);
         if (scenario === "held") {
@@ -966,7 +966,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
       // An intercepted iframe document has no network address space until Chrome grants it.
       await context.grantPermissions(["local-network-access"], { origin });
       await context.addInitScript(() => {
-        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal" }));
+        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ defaultView: "terminal" }));
         Object.defineProperty(document, "hasFocus", { configurable: true, value: () => false });
       });
       const page = await context.newPage();
@@ -1055,7 +1055,7 @@ export async function checkFocusedWindowReclaimsTerminalSize(browser: Browser, o
     };
     // both windows are in use the whole time: neither gets a focus event
     const inFront = async (page: Page) => { await page.addInitScript(() => Object.defineProperty(document, "hasFocus", { configurable: true, value: () => true })); };
-    const settings = { language: "en", defaultView: "terminal" };
+    const settings = { defaultView: "terminal" };
     // input-ready comes before an attach's resize reaches the pty: each window's size is read
     // once the shell reports the grid that window asked for (its last resize frame out)
     const askedGrid = async (page: Page): Promise<string> => {

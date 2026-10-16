@@ -1,4 +1,4 @@
-import type { InstalledNotes, ReleaseHighlights, ReleaseNote, SummaryLanguage, UpdateNotes, UpdateStatus } from "../../shared/update.ts";
+import type { InstalledNotes, ReleaseHighlights, ReleaseNote, UpdateNotes, UpdateStatus } from "../../shared/update.ts";
 import { ApiError } from "./api.ts";
 
 /**
@@ -75,11 +75,11 @@ export function notesRetryDelay(error: unknown, attempt: number): number | null 
 }
 
 /**
- * A release's highlights in the app's language, else in English; null for a release that wrote
- * none, whose changelog section is then what there is to read.
+ * A release's highlights in English; null for a release that wrote none, whose changelog section is
+ * then what there is to read.
  */
-export function summaryFor(release: Pick<ReleaseNote, "summary">, language: SummaryLanguage): ReleaseHighlights | null {
-  return release.summary?.[language] ?? release.summary?.en ?? null;
+export function summaryFor(release: Pick<ReleaseNote, "summary">): ReleaseHighlights | null {
+  return release.summary?.en ?? null;
 }
 
 /**

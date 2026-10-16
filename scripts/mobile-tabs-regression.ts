@@ -67,7 +67,7 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await herdrRpc("pane.report_agent", { pane_id: first, source: "manual", agent: "claude", state: "idle" });
 
     await context.addInitScript(() => {
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
       const viewport = window.visualViewport!;
       let height: number | null = null;
       Object.defineProperty(viewport, "height", { get: () => height ?? window.innerHeight });
@@ -156,7 +156,7 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     for (const scrolled of [false, true]) {
       const slow = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US", serviceWorkers: "block" });
       try {
-        await slow.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await slow.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
         const late = await slow.newPage();
         const lateErrors: string[] = [];
         late.on("pageerror", (error) => lateErrors.push(error.message));

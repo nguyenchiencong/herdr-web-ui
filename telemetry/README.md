@@ -111,4 +111,8 @@ ORDER BY installs DESC, theme;
 `MAX(version)` compares text, which orders `0.10.0` before `0.9.0`; read the version table with
 that in mind once a part reaches two digits.
 
+A `language` key in `settings` is only in rows written before the Worker stopped keeping it. The
+Worker still accepts that key from an older app and drops it, so the settings query above lists
+`language` only for an install whose latest non-NULL snapshot is one of those older rows.
+
 Anyone can post an event that passes the checks, so the counts are a trend, not an audit.

@@ -37,7 +37,7 @@ try {
     return path === "/" ? new Response('<html><head><link rel="stylesheet" href="/chat-history-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-history-fixture.js"></script></body></html>', { headers: { "Content-Type": "text/html" } }) : new Response(Bun.file(join(root, path.slice(1))));
   } });
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
-  // The fixture follows the browser's language; its text assertions below use English.
+  // The text assertions below are English.
   const page = await browser.newPage({ locale: "en-US" });
   page.setDefaultTimeout(10_000);
   const errors: string[] = [];

@@ -1,4 +1,4 @@
-<!-- See CONTRIBUTING.md for checks, translations, contract tests and the changelog (a file in changelog.d/, never CHANGELOG.md). -->
+<!-- See CONTRIBUTING.md for checks, contract tests and the changelog (a file in changelog.d/, never CHANGELOG.md). -->
 
 ## Change
 

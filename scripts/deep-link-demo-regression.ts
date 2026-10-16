@@ -24,7 +24,7 @@ const waitQuery = (page: Page, name: string, value: string | null) => page.waitF
 async function withPage(browser: Browser, search: string, run: (page: Page) => Promise<void>): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: "en-US" });
   try {
-    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -129,7 +129,7 @@ try {
       try {
         // after a reload marked to hold it, the PC list (its fetch and its stream) waits for __releaseRoster
         await heldContext.addInitScript(`
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
           const hold = sessionStorage.getItem("hold-roster") === "1";
           sessionStorage.removeItem("hold-roster");
           let release = () => {};
@@ -373,7 +373,7 @@ try {
       {
         const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
         try {
-          await phone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+          await phone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
           const page = await phone.newPage();
           await page.goto(`${url}?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&sidebar=shown`);
           await page.locator('.drawer-toggle[aria-expanded="true"]').waitFor();
@@ -407,7 +407,7 @@ try {
       const delayedContext = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: "en-US" });
       try {
         await delayedContext.addInitScript(`
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
           let released = false, fullMachines = null;
           const deliveries = [];
           const hold = machines => {
@@ -502,7 +502,7 @@ try {
       // Phone touch controls cannot open the palette; resizing restores the Files entry.
       const palettePhone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
-        await palettePhone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await palettePhone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
         const page = await palettePhone.newPage();
         await page.goto(`${url}?pane=${encodeURIComponent(INFRA)}`);
         await waitSelected(page, INFRA);
@@ -534,7 +534,7 @@ try {
       // closed by Cancel or by an item leaves no entry behind, so the next Back goes to the pane before
       const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
-        await phone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await phone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
         const page = await phone.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));

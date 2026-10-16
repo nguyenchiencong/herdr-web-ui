@@ -3,7 +3,6 @@ import { X } from "lucide-react";
 import { SUMMARY_GROUPS, type SummaryGroup, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
 import { useHerdrUpdate } from "../lib/herdrUpdate.ts";
 import { runningAppVersion, runningHerdrVersion, staleClientVersion, versionLabel } from "../lib/runningVersion.ts";
-import { useSettings } from "../lib/settings.ts";
 import { announcesUpdate, readAnnounced, summaryFor, watchAnnounced, writeAnnounced } from "../lib/updateNotes.ts";
 import { describeUpdate } from "../lib/updateProgress.ts";
 import { useReloadApp } from "../lib/reloadApp.ts";
@@ -13,7 +12,7 @@ import { Markdown } from "./Markdown.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import "./Machines.css";
 import "./UpdateControls.css";
-import { useLocale, useT } from "../lib/i18n.ts";
+import { LOCALE, useT } from "../lib/i18n.ts";
 
 declare const __APP_VERSION__: string;
 
@@ -21,7 +20,7 @@ const CHANGELOG = "https://github.com/devswha/herdr-web-ui/blob/main/CHANGELOG.m
 
 /**
  * What an update brings, or brought: each release it installs, newest first. A release is told
- * as patch notes, short lines in the app's language under what is new, improved and fixed, with
+ * as patch notes, short English lines under what is new, improved and fixed, with
  * its changelog section folded under them; a release that wrote none shows the section as the
  * release wrote it (English). The box scrolls on its own, so the buttons under it stay in reach. The text comes
  * from the Git remote: a section that cannot be drawn says so and takes nothing else down
@@ -29,14 +28,13 @@ const CHANGELOG = "https://github.com/devswha/herdr-web-ui/blob/main/CHANGELOG.m
  */
 function ReleaseNotes({ notes, label }: { notes: Pick<UpdateNotes, "releases" | "omitted">; label: string }) {
   const t = useT();
-  const { resolvedLanguage } = useSettings();
   // the lists of a release's highlights, as patch notes name them
   const groups: Record<SummaryGroup, string> = { new: t("New features"), improved: t("Improvements"), fixed: t("Bug fixes") };
   return <>
     <span className="settings-label">{label}</span>
     <div className="update-notes" role="region" aria-label={label} tabIndex={0}>
       {notes.releases.map((release) => {
-        const summary = summaryFor(release, resolvedLanguage);
+        const summary = summaryFor(release);
         const section = <RenderBoundary resetKey={release.notes} fallback={() => <p className="settings-hint">{t("These notes could not be shown.")} <a href={CHANGELOG} target="_blank" rel="noopener noreferrer">{t("Full changelog")}</a></p>}>
           <Markdown>{release.notes}</Markdown>
         </RenderBoundary>;
@@ -81,7 +79,6 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
   const t = useT();
   const reloadApp = useReloadApp();
   const { status, error, busy, needsReload, reload, notes, installed, request } = updates;
-  const locale = useLocale();
   const installing = busy && (status?.phase === "building" || status?.phase === "restarting");
   const tabVersion = staleClientVersion(status, __APP_VERSION__);
   // focusable from code only: a button that points here (the header line's) lands on it
@@ -105,7 +102,7 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
         <button type="button" className="btn btn-primary" disabled={busy || !status.available || !!status.blocked_reason} onClick={() => void request("install")}>{t("Update and restart")}</button>
       </div>
     </>}
-    {status?.checked_at && <p className="settings-hint">{t("Last checked {when}", { when: new Date(status.checked_at).toLocaleString(locale) })}</p>}
+    {status?.checked_at && <p className="settings-hint">{t("Last checked {when}", { when: new Date(status.checked_at).toLocaleString(LOCALE) })}</p>}
     {needsReload && <p className="settings-hint">{reload === "updated" ? t("The server was updated. Save any unsent drafts, then") : t("Part of the app could not load. Save unsent drafts, then reload.")} <button type="button" className="btn" disabled={reloadApp.waiting} onClick={reloadApp.reloadApp}>{t("Reload app")}</button></p>}
     </div></div>
   </section>;

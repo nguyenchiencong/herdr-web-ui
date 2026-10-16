@@ -7,7 +7,7 @@ import { Skeleton } from "./Skeleton.tsx";
 
 import type { RepoDiffFile, RepoDiffFileList, RepoDiffScope } from "../../shared/protocol.ts";
 import { changeTree, changeTreeFolders, type ChangeTreeEntry } from "../lib/changeTree.ts";
-import { useLocale, useT } from "../lib/i18n.ts";
+import { LOCALE, useT } from "../lib/i18n.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { diffErrorMessage, nothingChangedWord, STATUS_MARK, statusWord, type RepoComparison } from "../lib/repoDiff.ts";
 import { skeletonRows } from "../lib/skeleton.ts";
@@ -31,7 +31,6 @@ const PENDING: Load = { status: "pending" };
  */
 export function RepoChanges({ paneId, directory, onOpenDiff }: RepoChangesProps) {
   const t = useT();
-  const locale = useLocale();
   const { fetchRepoDiffFiles } = useMachineApi();
   const [scope, setScope] = useState<RepoDiffScope>("workspace");
   const [base, setBase] = useState("");
@@ -96,7 +95,7 @@ export function RepoChanges({ paneId, directory, onOpenDiff }: RepoChangesProps)
           <span className="repo-change-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
           {open ? <FolderOpen className="repo-change-glyph" aria-hidden="true" /> : <Folder className="repo-change-glyph" aria-hidden="true" />}
           <span className="repo-change-folder-name">{entry.name}</span>
-          <span className="repo-change-folder-count" aria-hidden="true">{entry.files.toLocaleString(locale)}</span>
+          <span className="repo-change-folder-count" aria-hidden="true">{entry.files.toLocaleString(LOCALE)}</span>
         </button>
         {open && <ul className="repo-change-children">{rows(entry.entries, files, comparison)}</ul>}
       </li>;
@@ -118,8 +117,8 @@ export function RepoChanges({ paneId, directory, onOpenDiff }: RepoChangesProps)
         {file.binary === true
           ? <span className="repo-change-counts">{t("Binary")}</span>
           : file.additions !== null && file.deletions !== null && <span className="repo-change-counts">
-            <span className="repo-change-added">+{file.additions.toLocaleString(locale)}</span>
-            <span className="repo-change-deleted">−{file.deletions.toLocaleString(locale)}</span>
+            <span className="repo-change-added">+{file.additions.toLocaleString(LOCALE)}</span>
+            <span className="repo-change-deleted">−{file.deletions.toLocaleString(LOCALE)}</span>
           </span>}
       </button>
     </li>;
@@ -177,8 +176,8 @@ export function RepoChanges({ paneId, directory, onOpenDiff }: RepoChangesProps)
           {listing !== null && listing.files.length === 0 && <li className="repo-changes-note">{nothingChangedWord(t, listing.scope)}</li>}
           {listing?.truncated && <li className="repo-changes-note" role="status">
             {listing.total === null
-              ? t("The list was cut short; only the first {count} files are shown.", { count: listing.files.length.toLocaleString(locale) })
-              : t("Showing the first {count} of {total} changed files.", { count: listing.files.length.toLocaleString(locale), total: listing.total.toLocaleString(locale) })}
+              ? t("The list was cut short; only the first {count} files are shown.", { count: listing.files.length.toLocaleString(LOCALE) })
+              : t("Showing the first {count} of {total} changed files.", { count: listing.files.length.toLocaleString(LOCALE), total: listing.total.toLocaleString(LOCALE) })}
           </li>}
         </ul>}
     </div>

@@ -31,7 +31,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
     contexts.push(context);
     await context.addInitScript(([ids, lens, blockViewWrites, platform]) => {
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertDone: "off" }));
+      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ alertDone: "off" }));
       for (const id of ids as string[]) localStorage.setItem(`herdr-web-ui:view:${id}`, lens as string);
       if (blockViewWrites) {
         const setItem = Storage.prototype.setItem;

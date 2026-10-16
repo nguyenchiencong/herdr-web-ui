@@ -11,7 +11,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(10_000);
   await context.addInitScript(() => {
-    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "line" }));
+    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: "line" }));
   });
   const sent: any[] = [];
   const resizes: any[] = [];
@@ -603,7 +603,7 @@ async function checkKeyBarWhileLineComposes(browser: Browser, origin: string, pa
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(10_000);
   await context.addInitScript((pane) => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "line" }));
+    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: "line" }));
     localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
   }, pane);
   const frames: any[] = [];

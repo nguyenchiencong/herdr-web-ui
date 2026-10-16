@@ -62,7 +62,6 @@ describe("telemetry settings snapshot", () => {
       chatFontSize: 11,
       chatWidth: "wide",
       autoSendQueued: false,
-      language: "ko",
       alertDone: "always",
       usageCount: "left",
       usageGlance: "session",
@@ -93,7 +92,6 @@ describe("telemetry settings snapshot", () => {
       chatFontSize: 11,
       chatWidth: "wide",
       autoSendQueued: false,
-      language: "ko",
       alertDone: "always",
       usageCount: "left",
       usageGlance: "session",
@@ -527,9 +525,9 @@ describe("quick replies row", () => {
 });
 
 describe("language", () => {
-  it("keeps a listed language and loads a removed one (Turkish) as System", () => {
-    expect(sanitizeSettings({ language: "ko" }).language).toBe("ko");
-    expect(sanitizeSettings({ language: "tr" }).language).toBe("system");
+  it("drops a UI language an older record still holds: the app is English only", () => {
+    expect("language" in sanitizeSettings({ language: "ko" })).toBe(false);
+    expect("language" in sanitizeSettings({ language: "tr" })).toBe(false);
   });
 });
 

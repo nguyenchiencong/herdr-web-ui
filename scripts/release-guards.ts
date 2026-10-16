@@ -84,7 +84,7 @@ export function workerProblems(current: string, deployed: string | undefined): s
   return [`${WORKER_SOURCES.join(" or ")} changed since the Worker was last deployed (${DEPLOYED_FILE}). The deployed Worker refuses a settings snapshot with a key or value it does not know, so this release's events would be lost. Any edit to those files counts, comments and client-only exports included; a redeploy that changes nothing is the expected cost. Deploy the Worker first (telemetry/README.md: database columns, then \`bunx wrangler deploy\` from telemetry/), then run \`bun scripts/release-guards.ts --worker-deployed\` and commit ${DEPLOYED_FILE} in the release PR (or a follow-up PR when it already merged).`];
 }
 
-/** Release metadata (version sources, CHANGELOG section, patch notes in every language) as the Release run reads it. */
+/** Release metadata (version sources, CHANGELOG section, patch notes in English) as the Release run reads it. */
 export function metadataProblems(read: (path: string) => string, version: string): string[] {
   try {
     releaseNotes(version, version, read("herdr-plugin.toml"), read("CHANGELOG.md"), read(SUMMARIES_FILE));

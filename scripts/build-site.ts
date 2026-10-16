@@ -2,8 +2,7 @@
  * Assembles the website into _site/ for GitHub Pages (.github/workflows/pages.yml) and for a local
  * look (`bun run build:site`, then serve _site/ under /herdr-web-ui/).
  *
- * The page is site/index.html, with its Simplified Chinese copy at site/zh/index.html (the same page,
- * its paths one level up; a change to one belongs in the other). Both are built from the README's artifacts: its top video (`videos`, a GitHub
+ * The page is site/index.html. It is built from the README's artifacts: its top video (`videos`, a GitHub
  * upload that is downloaded, never committed; docs/development.md, "README media"), its feature clips
  * (docs/media/readme/*.webp) and the installer still. A video's poster frame is cut with ffmpeg when it
  * is installed (the workflow installs it); without it the still stays full size and a poster that
@@ -32,7 +31,6 @@ const out = join(root, "_site");
 
 const copies: Array<[from: string, to: string]> = [
   ["site/index.html", "index.html"],
-  ["site/zh/index.html", "zh/index.html"],
   ["site/googlec8861932279eca6b.html", "googlec8861932279eca6b.html"],
   // the one-line installer: curl -fsSL https://herdrweb.dev/install.sh | sh
   ["install.sh", "install.sh"],
@@ -45,7 +43,7 @@ const copies: Array<[from: string, to: string]> = [
 ];
 
 /** The pages, in _site/: every one gets the figures, the media checks and the FAQ data below. */
-const pages = ["index.html", "zh/index.html"];
+const pages = ["index.html"];
 
 /** README stills, scaled down for the page when ffmpeg is there. */
 const stills: Array<{ file: string; width: number }> = [{ file: "install.png", width: 1400 }];
@@ -208,7 +206,7 @@ for (const name of pages) {
 // A rebuild is not necessarily a content change; omit the optional lastmod rather than invent it.
 writeFileSync(
   join(out, "sitemap.xml"),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://herdrweb.dev/</loc></url>\n  <url><loc>https://herdrweb.dev/zh/</loc></url>\n</urlset>\n`,
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://herdrweb.dev/</loc></url>\n</urlset>\n`,
 );
 
 // the demo: the real client, relative paths, the transport in front of it

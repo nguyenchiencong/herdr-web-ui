@@ -105,7 +105,7 @@ try {
       const open = async (seed: Record<string, string>, pane: string, touch = false): Promise<{ page: Page; errors: string[]; close: () => Promise<void> }> => {
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", hasTouch: touch });
         await context.addInitScript((queues) => {
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
           for (const [owner, value] of Object.entries(queues)) localStorage.setItem(`herdr-web-ui:queue:${owner}`, value);
         }, seed);
         const page = await context.newPage();

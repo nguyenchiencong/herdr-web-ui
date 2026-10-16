@@ -3,7 +3,7 @@ import { createElement, memo } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { createDayStore, DayStoreContext, type DayClock } from "../lib/localDay.ts";
-import { currentLocale } from "../lib/i18n.ts";
+import { LOCALE } from "../lib/i18n.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { TurnTime } from "./TurnTime.tsx";
 
@@ -19,7 +19,7 @@ describe("TurnTime", () => {
     const clock: DayClock = { now: () => now, setTimer: () => 1, clearTimer: () => {} };
     const store = createDayStore(clock);
     const ts = new Date(2020, 1, 3, 23, 59).toISOString();
-    const time = new Date(ts).toLocaleTimeString(currentLocale(), { hour: "2-digit", minute: "2-digit" });
+    const time = new Date(ts).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
     const render = (): string => {
       const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
       Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });

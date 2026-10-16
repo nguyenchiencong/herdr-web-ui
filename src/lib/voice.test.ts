@@ -181,46 +181,40 @@ describe("replaceIfUnchanged", () => {
 });
 
 describe("dictationLocale", () => {
-  it("maps the UI language to a recognition locale when the browser names none", () => {
-    expect(dictationLocale("auto", "system", "ko", [])).toBe("ko-KR");
-    expect(dictationLocale("auto", "system", "ja", [])).toBe("ja-JP");
-    expect(dictationLocale("auto", "system", "zh", [])).toBe("zh-CN");
-    expect(dictationLocale("auto", "system", "en", [])).toBe("en-US");
+  it("is English when the browser names no language", () => {
+    expect(dictationLocale("auto", [])).toBe("en-US");
+    expect(dictationLocale("auto", ["*"])).toBe("en-US");
+    expect(dictationLocale("auto", ["fil-PH"])).toBe("en-US");
   });
 
-  it("follows the browser's first language on auto when the UI is not translated into it", () => {
-    // a Hungarian browser gets an English UI, but is heard in Hungarian
-    expect(dictationLocale("auto", "system", "en", ["hu-HU", "en-US"])).toBe("hu-HU");
-    expect(dictationLocale("auto", "system", "en", ["de"])).toBe("de");
-    expect(dictationLocale("auto", "system", "ko", ["de-DE", "ko-KR"])).toBe("de-DE");
-    // not a language tag: the UI language
-    expect(dictationLocale("auto", "system", "en", ["*"])).toBe("en-US");
-    expect(dictationLocale("auto", "system", "en", ["hu"])).toBe("hu");
-    expect(dictationLocale("auto", "system", "en", ["fil-PH"])).toBe("en-US");
+  it("follows the browser's first language on auto when it is not English", () => {
+    // a Hungarian browser is heard in Hungarian
+    expect(dictationLocale("auto", ["hu-HU", "en-US"])).toBe("hu-HU");
+    expect(dictationLocale("auto", ["de"])).toBe("de");
+    expect(dictationLocale("auto", ["ko-KR", "en-US"])).toBe("ko-KR");
+    expect(dictationLocale("auto", ["zh-TW"])).toBe("zh-TW");
+    expect(dictationLocale("auto", ["hu"])).toBe("hu");
   });
 
-  it("keeps the UI language's locale on auto when the browser's first language is a UI language", () => {
-    expect(dictationLocale("auto", "system", "ko", ["ko", "en"])).toBe("ko-KR");
-    expect(dictationLocale("auto", "system", "en", ["en-GB"])).toBe("en-US");
-    expect(dictationLocale("auto", "system", "ja", ["ja"])).toBe("ja-JP");
-    expect(dictationLocale("auto", "system", "zh", ["zh-TW"])).toBe("zh-CN");
-    expect(dictationLocale("auto", "system", "zh", ["zh-Hant-TW"])).toBe("zh-CN");
-    expect(dictationLocale("auto", "system", "en", ["en-US", "hu"])).toBe("en-US");
+  it("is English on auto when the browser's first language is English, whatever follows it", () => {
+    expect(dictationLocale("auto", ["en-US"])).toBe("en-US");
+    expect(dictationLocale("auto", ["en-GB", "hu"])).toBe("en-US");
+    expect(dictationLocale("auto", ["EN", "ja-JP"])).toBe("en-US");
+    expect(dictationLocale("auto", ["en-JP", "ja-JP"])).toBe("en-US");
   });
 
-  it("keeps a UI language chosen by hand on auto, and a chosen dictation language over both", () => {
-    expect(dictationLocale("auto", "ko", "ko", ["hu-HU"])).toBe("ko-KR");
-    expect(dictationLocale("hu-HU", "en", "en", ["en-US"])).toBe("hu-HU");
-    expect(dictationLocale("pt-BR", "system", "en", ["de-DE"])).toBe("pt-BR");
+  it("keeps a chosen dictation language over the browser's", () => {
+    expect(dictationLocale("hu-HU", ["en-US"])).toBe("hu-HU");
+    expect(dictationLocale("pt-BR", ["de-DE"])).toBe("pt-BR");
   });
 });
 
 describe("transcribeLanguage", () => {
-  it("sends the two-letter subtag, or the UI language for a tag without one", () => {
-    expect(transcribeLanguage("hu-HU", "en")).toBe("hu");
-    expect(transcribeLanguage("zh-TW", "en")).toBe("zh");
-    expect(transcribeLanguage("DE", "ko")).toBe("de");
-    expect(transcribeLanguage("fil-PH", "en")).toBe("en");
+  it("sends the two-letter subtag, or English for a tag without one", () => {
+    expect(transcribeLanguage("hu-HU")).toBe("hu");
+    expect(transcribeLanguage("zh-TW")).toBe("zh");
+    expect(transcribeLanguage("DE")).toBe("de");
+    expect(transcribeLanguage("fil-PH")).toBe("en");
   });
 });
 
@@ -439,7 +433,7 @@ describe("createVoiceEngine", () => {
       setError: () => undefined,
       options: () => ({ mode: "chat", enabled: true, polish: false, onText: (result) => { texts.push(result.text); } }),
       engine: () => provider,
-      language: () => ({ locale, ui: "en" }),
+      locale: () => locale,
       recorder: () => ({ mimeType: "audio/webm", extension: "webm" }),
       speech: () => provider === "browser" ? FakeSpeech : null,
     });
@@ -461,7 +455,7 @@ describe("createVoiceEngine", () => {
     } finally { voice.cancel(); }
   });
 
-  it("uploads the selected language rather than the display language", async () => {
+  it("uploads the dictation language's two-letter code", async () => {
     const { voice, reached } = engine("hu-HU");
     try {
       voice.press();

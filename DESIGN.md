@@ -1266,7 +1266,7 @@ One set for both themes: the card is island black wherever it shows.
 - Held messages (`.composer-queue`) are quiet rows on the input card's column, above it: the
   card's width and gutter at every window width, no tint and no box. One `--border` hairline
   above the group, then one caption line in `--text-dim` at `--fs-xs` (a clock and the sentence
-  `Held until the agent is ready`, plus `· 2 messages` from two; a translation too long for a
+  `Held until the agent is ready`, plus `· 2 messages` from two; text too long for a
   phone's column takes a second line, it is never cut), then a row per message: its text, still
   a box to edit (transparent until focused, up to four lines, two at `480px` and below),
   `Send now` and `Discard`. Hairlines between rows run the column's width; every line of text starts `--space-3`
@@ -1385,7 +1385,7 @@ One set for both themes: the card is island black wherever it shows.
   an edge swipe) takes one step out and never leaves the app from inside Settings; the Back
   control, the X, Escape and the scrim take the same entries off. Beside the list, turning pages
   replaces the one entry. A reload steps out of the entries it finds; Forward reopens the page.
-- Pages, in order: **Appearance** (theme, colors, density, language, sidebar rows), **Chat**
+- Pages, in order: **Appearance** (theme, colors, density, sidebar rows), **Chat**
   (panes open in, show thinking, chat width, chat font size and family; then
   **Composer**: Enter sends; then **Quick replies**; then **File viewer**: wrap long
   lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel

@@ -95,7 +95,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox"] });
   const ownerContext = await browser.newContext({ viewport: { width: 1100, height: 800 }, locale: "en-US" });
   contexts.push(ownerContext);
-  await ownerContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+  await ownerContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
   await portalFetchPage(ownerContext);
   const ownerPage = await ownerContext.newPage();
   ownerPage.setDefaultTimeout(10_000);
@@ -127,7 +127,7 @@ try {
 
   const watchContext = await browser.newContext({ viewport: { width: 1100, height: 800 }, locale: "en-US" });
   contexts.push(watchContext);
-  await watchContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+  await watchContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
   await watchContext.addCookies([{ name: DEVICE_COOKIE, value: watchToken, url: origin, httpOnly: true, sameSite: "Strict" }]);
   await portalFetchPage(watchContext);
   const watchPage = await watchContext.newPage();
@@ -196,7 +196,7 @@ try {
   servers.push(blockedServer);
   const blockedContext = await browser.newContext({ viewport: { width: 1100, height: 800 }, locale: "en-US" });
   contexts.push(blockedContext);
-  await blockedContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+  await blockedContext.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
   await portalFetchPage(blockedContext);
   const blockedPage = await blockedContext.newPage();
   blockedPage.setDefaultTimeout(10_000);

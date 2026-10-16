@@ -18,8 +18,8 @@ const FIELDS = ["api_key", "base_url", "transcribe_model", "polish_model"] as co
 type Field = typeof FIELDS[number];
 type VoiceFile = Partial<Record<Field, string>>;
 
-/** without a language from the client: the app's first users dictate Korean with English code terms */
-const DEFAULT_LANGUAGE = "ko";
+/** without a language from the client: English, the app's own language */
+const DEFAULT_LANGUAGE = "en";
 const PROMPTS: Record<VoiceMode, string> = {
   chat: "Dictation of a message to a coding agent",
   terminal: "Dictation of a shell command line typed into a terminal",

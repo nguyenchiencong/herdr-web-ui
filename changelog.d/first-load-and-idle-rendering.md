@@ -1,9 +1,8 @@
 ### Changed
-- The main script is 32% smaller (297,347 bytes brotli, down from 438,526). The settings, the command
+- The main script is 31% smaller (302,711 bytes brotli, down from 438,526). The settings, the command
   palette and the dialogs and viewers for files, diffs, images, machines, worktrees and new sessions
   load the first time they are needed; the palette and the new-session dialog are fetched while the
-  app is idle, so they normally open at once. Each language's text loads only when the app uses that
-  language, and the page draws in English for up to 1.5 seconds while that text is still arriving.
+  app is idle, so they normally open at once.
 
 ### Maintenance
 - An unchanged auth answer no longer re-renders the app on each five-second health poll. A chat read

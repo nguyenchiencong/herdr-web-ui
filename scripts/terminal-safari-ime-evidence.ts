@@ -80,7 +80,7 @@ process.stdin.on('data', bytes => {
       const address = web.httpServer.address(); assert(address && typeof address !== "string");
       await context.addInitScript(pane => {
         Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
-        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
+        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: "direct" }));
         localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
       }, pane);
       const page = await context.newPage();

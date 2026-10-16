@@ -6,7 +6,7 @@ backend (`server/`) that bridges herdr's unix-socket API, and the wire contract 
 
 These files hold only the traps the code and tests do not show. Commands, layout, checks and
 release steps are in [docs/development.md](docs/development.md); contributors follow
-[CONTRIBUTING.md](CONTRIBUTING.md). Code conventions (imports, CSS tokens, i18n entries, fixed
+[CONTRIBUTING.md](CONTRIBUTING.md). Code conventions (imports, CSS tokens, fixed
 sleeps, wording, icons) are enforced by the `conventions.test.ts` files, whose failures say what
 to change. Also read [server/AGENTS.md](server/AGENTS.md) and [src/AGENTS.md](src/AGENTS.md).
 

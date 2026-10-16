@@ -29,7 +29,6 @@ async function statusAt(origin: string): Promise<TelemetryStatus> {
 
 function fixtureSettings() {
   return {
-    language: "en",
     palette: "catppuccin",
     terminalInputMode: "line",
     terminalFontSize: 17,

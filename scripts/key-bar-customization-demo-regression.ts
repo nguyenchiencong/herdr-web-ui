@@ -144,7 +144,7 @@ try {
         await context.addInitScript(({ pane, key }) => {
           // Seed once. Reload must read the layout the user just edited.
           if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify({
-            language: "en", terminalInputMode: "direct",
+            terminalInputMode: "direct",
             keyBarExtras: ["alt", "shift-tab", "home-end", "page-up-down", "ctrl-d", "ctrl-z", "pipe", "tilde", "slash"],
           }));
           localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");

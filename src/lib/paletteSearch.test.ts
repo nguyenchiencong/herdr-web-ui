@@ -1,12 +1,7 @@
-import { beforeAll, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 import type { HerdrPane, PluginActions, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
-import { loadLanguage, translate } from "./i18n.ts";
 import { filterPanesByStatus, groupByWorkspace, offeredPluginActions, parseQuery, rankPanes, recentPanes, statusCounts } from "./paletteSearch.ts";
-
-beforeAll(async () => {
-  await loadLanguage("ko");
-});
 
 function pane(paneId: string, fields: Partial<HerdrPane> = {}): HerdrPane {
   return {
@@ -63,7 +58,7 @@ describe("rankPanes", () => {
     expect(rankPanes("reviewing", panes, workspaces)).toEqual([]);
   });
 
-  it("finds a pane by the name the UI gives a tab herdr still numbers, in the user's language too", () => {
+  it("finds a pane by the name the UI gives a tab herdr still numbers", () => {
     // herdr names a tab by its place ("2") until it is renamed; the strip and the footer say "Tab 2"
     const numbered = [
       { ...tabs[0]!, label: "1" },
@@ -72,8 +67,6 @@ describe("rankPanes", () => {
     ] satisfies TabInfo[];
     const roster = [...panes, pane("delta", { label: "Logs", tab_id: "t1b" })];
     expect(ids(rankPanes("Tab 2", roster, workspaces, { tabs: numbered }))).toEqual(["delta"]);
-    expect(ids(rankPanes("탭 2", roster, workspaces, { tabs: numbered, t: (key, vars) => translate("ko", key, vars) }))).toEqual(["delta"]);
-    expect(ids(rankPanes("탭 2", roster, workspaces, { tabs: numbered }))).toEqual([]);
     // the shown name adds to the label herdr holds, it does not replace it
     expect(ids(rankPanes("2", roster, workspaces, { tabs: numbered }))).toContain("delta");
     expect(ids(rankPanes("Tab 2", roster, workspaces, { tabs }))).toEqual([]);

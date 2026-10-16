@@ -69,15 +69,3 @@ export function whenIdle(run: () => void, waitMs = 2_000): () => void {
   const timer = globalThis.setTimeout(run, waitMs);
   return () => globalThis.clearTimeout(timer);
 }
-
-/** Resolves when `work` settles, or `ms` later at the latest: a part that arrives slowly is not waited for past that. Never rejects. */
-export function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    const done = (): void => {
-      clearTimeout(timer);
-      resolve();
-    };
-    work.then(done, done);
-  });
-}

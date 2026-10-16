@@ -24,7 +24,7 @@ try {
     profiles = [profile];
     const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: phone, hasTouch: phone });
     try {
-      await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+      await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({})));
       const page = await context.newPage();
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));

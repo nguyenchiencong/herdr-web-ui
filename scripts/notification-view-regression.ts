@@ -23,7 +23,7 @@ export async function checkNotificationView(browser: Browser, origin: string): P
     await herdrRpc("pane.report_agent", { pane_id: agent, source: "manual", agent: "claude", state: "idle" });
     await context.addInitScript((pane) => {
       if (localStorage.getItem("herdr-web-ui:settings") !== null) return;
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({}));
       localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal"); // the agent pane remembered the terminal
     }, agent);
     const page = await context.newPage();

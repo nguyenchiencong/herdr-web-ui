@@ -34,7 +34,7 @@ export async function checkAlertSound(browser: Browser, origin: string): Promise
     await report(thirdPane, "idle");
 
     await context.addInitScript(() => {
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertDone: "off", alertSound: true }));
+      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ alertDone: "off", alertSound: true }));
       const notes: number[] = [];
       const recorded = window as unknown as { chimes: number[]; chimeEnd: number };
       recorded.chimes = notes;

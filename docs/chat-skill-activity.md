@@ -3,7 +3,7 @@
 The chat shows a skill's name and recorded status above the assistant's work
 block. This remains visible when work is folded and when thinking is hidden.
 Open the indicator to see the evidence explanation and document path, when known.
-English and Korean labels are provided; paths are text, not a new file-read API.
+English labels are provided; paths are text, not a new file-read API.
 
 The display distinguishes evidence from workflow completion:
 
@@ -49,5 +49,5 @@ native event deduplication and turn/history isolation. The native Codex HTTP
 contract test checks that the API carries activity without the instruction body.
 `bun scripts/skill-activity-browser-qa.ts` bundles the actual React components and
 uses both native parsers to check folded work, status updates, provenance, pane
-reset and a 390px Korean/light layout in Chrome. Screenshots go to the ignored
+reset and a 390px light layout in Chrome. Screenshots go to the ignored
 `evidence/skill-activity/` directory; it touches no live herdr panes.
