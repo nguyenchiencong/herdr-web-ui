@@ -30,6 +30,7 @@ import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { focusWorkspaceListToggle } from "./lib/focus.ts";
 import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
 import { paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
+import { shownAgent } from "../shared/sleep-agent.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { applyPaneStatus } from "./lib/snapshot.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
@@ -538,7 +539,7 @@ export function App() {
     showDroplet({
       machineId: machine.id,
       paneId: pane.pane_id,
-      agent: pane.agent ?? null,
+      agent: shownAgent(pane.agent, pane.hibernated != null),
       title: alertPaneTitle(pane),
       machine: machinesRef.current.length > 1 ? machine.name : null,
       kind,
@@ -890,7 +891,8 @@ export function App() {
   // the tab that governs the pane region, so the strip's tabs and the pane they select are
   // one thing to a screen reader (A4); null while no tab owns this pane
   const tabPanelLabel = paneTabPanelLabel(snapshot, selectedPane, t);
-  const selectedAgent = selectedPane?.agent ?? null;
+  // a sleeping session is an agent, though herdr names none, pi or the launcher's label for its pane: its lens is the chat
+  const selectedAgent = shownAgent(selectedPane?.agent, (selectedPane as HerdrPane | null | undefined)?.hibernated != null);
   // unknown herdr (offline, or a server that predates the flag) counts as attach-capable
   // a server that repaints the pane's screen instead (terminal_mirror) has a terminal lens too
   const terminalAttach = targetHerdr?.terminal_attach !== false || targetHerdr?.terminal_mirror === true;
@@ -1538,7 +1540,7 @@ export function App() {
             const slotSnapshot = active ? snapshot : otherMachine?.snapshot ?? null;
             const attach = active ? terminalAttach : otherAttach;
             const lensOf = (item: HerdrPane): PaneView => active && item.pane_id === selectedPaneId ? view
-              : storedView(lenses, viewPicks, item.pane_id, machineId, item.agent != null, attach);
+              : storedView(lenses, viewPicks, item.pane_id, machineId, shownAgent(item.agent, item.hibernated != null) !== null, attach);
             const slotView = active ? view : pane ? lensOf(pane) : "terminal";
             const onSelect = active ? selectPane : (id: string, focusInput = true) => selectInSlot(slot, machineId, id, focusInput);
             // one pane's panel keeps the page's own id, whichever slot draws it
@@ -1566,7 +1568,7 @@ export function App() {
               >
                 {splitOn && (
                   <div className="pane-slot-bar">
-                    {pane?.agent && <AgentMark agent={pane.agent} size={14} />}
+                    {shownAgent(pane?.agent, (pane as HerdrPane | undefined)?.hibernated != null) !== null && <AgentMark agent={shownAgent(pane?.agent, (pane as HerdrPane | undefined)?.hibernated != null) ?? ""} size={14} />}
                     <span className="pane-slot-title" title={pane ? displayPaneTitle(pane) : undefined}>{pane ? displayPaneTitle(pane) : t("Pane closed")}</span>
                     {machines.length > 1 && <span className="pane-slot-machine">{machine?.name ?? machineId}</span>}
                     <button type="button" className="icon-button pane-slot-action" aria-label={t(slotView === "chat" ? "Show the terminal" : "Show the chat")} title={t(slotView === "chat" ? "Show the terminal" : "Show the chat")} onClick={toggleSlotView}>
@@ -1605,8 +1607,9 @@ export function App() {
                         paneId={item?.restore_error ? null : item?.pane_id ?? null}
                         mirrored={herdr ? herdr.terminal_attach === false || herdr.terminal_mirror === true : null}
                         restoreError={item?.restore_error ?? null}
-                        agent={item?.agent ?? null}
+                        agent={shownAgent(item?.agent, false)}
                         agentStatus={item?.agent_status}
+                        hibernated={item?.hibernated ?? null}
                         backgroundTasks={item?.background_tasks ?? 0}
                         // an offline PC's cached plan cannot be read
                         plan={machine?.state === "connected" ? (item as HerdrPane | undefined)?.plan ?? null : null}

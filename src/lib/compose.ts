@@ -35,6 +35,8 @@ export function composerPayload(text: string, bracketedPaste: boolean): string {
 export function submitNotTyped(code: string): boolean {
   return ["agent_blocked", "read_only", "submit_timeout", "agent_not_ready", "pending_input_unsupported", "invalid_delivery", "invalid_submit_text",
     "invalid_submit_id", "pending_limit", "pending_not_found", "pending_busy", "invalid_pending_action", "pending_target_changed", "pending_lease_lost", "not_attached", "input_not_ready", "attach_held", "pane_not_found", "retired_submit_id", "input_draft",
+    // a pi session asleep in its pane: Enter may have woken it, but nothing of the message was typed
+    "agent_waking", "pi_asleep", "pi_draft_restored", "sleep_changed",
     // refused by this view while the terminal holds input (PaneTerminal), before anything was sent
     "held_input"].includes(code);
 }
@@ -68,6 +70,10 @@ export function submitNote(code: string, message: string): string {
   if (code === "input_draft") return t("Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.");
   if (code === "pending_input_unsupported") return t("Update this PC to send messages in the next turn. Your draft stayed here.");
   if (code === "submit_timeout") return t("Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.");
+  if (code === "agent_waking") return t("Not sent: pi is still waking, or going to sleep, in its pane. Nothing was typed; send the message again once pi is ready.");
+  if (code === "pi_draft_restored") return t("Not sent: pi restores an unsent draft when it resumes, so this message would join it. Resume pi and check the terminal, then send again.");
+  if (code === "pi_asleep") return t("Not sent: this pi session is asleep and no sleep record can be read for it. Nothing was typed; resume it in the terminal, then send again.");
+  if (code === "sleep_changed") return t("Not sent: pi's wake prompt is no longer the pane's last line, or pi is no longer asleep there, so nothing was sent. If pi is still asleep, press Enter in the terminal to wake it, then send again.");
   if (code === "disconnected" || code === "timeout") return t("Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.");
   return t("Not sent: {message}", { message });
 }

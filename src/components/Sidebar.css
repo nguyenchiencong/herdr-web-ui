@@ -485,6 +485,19 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 
 .sidebar-status.badge-restore-error { color: var(--status-blocked); }
 
+/* a pi session asleep in its pane: the moon the Agents row draws (AgentSidebar.css), in the status cell */
+.sidebar-asleep {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-dim);
+}
+
+.sidebar-asleep svg {
+  display: block;
+  width: var(--space-3);
+  height: var(--space-3);
+}
+
 @keyframes sidebar-breathe {
   0%,
   40% { opacity: 1; }

@@ -35,7 +35,20 @@ export type HerdrTab = TabInfo;
  * `background_wait`: the pane is at rest while work its turn started still runs, and the turn goes on when it ends (server/background-wait.ts); absent when not.
  * `plan`: how far the pane's agent's task list or checklist has progressed; absent when it keeps none.
  */
-export type HerdrPane = PaneInfo & { background_tasks?: number; background_wait?: true; plan?: PlanSummary };
+export type HerdrPane = PaneInfo & { background_tasks?: number; background_wait?: true; plan?: PlanSummary; hibernated?: HibernatedPane };
+
+/**
+ * A pi session its sleep launcher holds in this pane (server/pi-sleep.ts). herdr names no agent for
+ * such a pane, or pi when the launcher runs as a process named pi, or the launcher's own `zz pi` label; the
+ * launcher's `zz <title>` is its title. The chat reads the session's transcript on
+ * the server, so the annotation carries only what the client shows.
+ */
+export interface HibernatedPane {
+  agent: "pi";
+  title: string;
+  slept_at: string;
+  next_due_at: string | null;
+}
 
 export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAction, BridgeIdentity, BridgeHealth } from "./machines.ts";
 
@@ -1069,6 +1082,24 @@ export interface InteractivePrompt {
   fallback?: true;
   /** Claude's plan file behind a plan card, whose whole text is then the body: opened in the file viewer */
   plan_file?: string;
+  /** a pi session asleep in its pane: option 0 resumes it (Enter), option 1 quits it (a lone q). A message sent from the composer wakes it first. */
+  asleep?: true;
+  /** pi's session picker: the search text pi holds, and the rows shown from `window` (the rest are reached by `actions`) */
+  search?: { value: string };
+  /** the picker's own controls, in the order the card shows them */
+  actions?: InteractivePromptAction[];
+  /** the picker's rows on screen: the first row's place in the whole list, and how many sessions there are */
+  window?: { first: number; total: number };
+}
+
+/** A card control that is not an option: pi's picker scope, paging and cancel. */
+export type InteractivePromptActionId = "scope" | "earlier" | "later" | "cancel";
+
+export interface InteractivePromptAction {
+  id: InteractivePromptActionId;
+  label: string;
+  /** the scope a scope control moves to: `all` or `current` (pi's Current Folder) */
+  to?: "all" | "current";
 }
 
 export interface InteractivePromptStep {
@@ -1082,13 +1113,19 @@ export interface InteractivePromptOption {
   description: string | null;
 }
 
-/** POST /api/pane/prompt/answer body. Exactly one of option_index / option_indices / custom_text. */
+/**
+ * POST /api/pane/prompt/answer body. Exactly one of option_index / option_indices / custom_text /
+ * action / search_text: the card's option, its multiple choice, its typed answer, one of its controls,
+ * or the picker's search text.
+ */
 export interface PromptAnswer {
   pane_id: string;
   prompt_id: string;
   option_index?: number;
   option_indices?: number[];
   custom_text?: string;
+  action?: InteractivePromptActionId;
+  search_text?: string;
 }
 
 /**

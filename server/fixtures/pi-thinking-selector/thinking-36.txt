@@ -1,0 +1,19 @@
+────────────────────────────────────
+
+Thinking Level
+
+Shift+Tab cycles thinking levels
+in-session
+
+>
+
+    off
+    minimal
+    low
+    medium
+→ ✓ high
+    xhigh
+
+  Enter to select · Ctrl+S to set as
+default · Escape/Ctrl+C to cancel
+────────────────────────────────────

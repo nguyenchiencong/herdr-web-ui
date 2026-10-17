@@ -22,8 +22,14 @@ export function alertStatus(status: AgentStatus, waiting: boolean | undefined): 
   return waiting === true && status !== "working" && status !== "blocked" ? "working" : status;
 }
 
-/** The name a pane goes by in the sidebar and in every notification. */
-export function paneTitle(pane: Pick<PaneInfo, "pane_id" | "cwd" | "terminal_title" | "terminal_title_stripped">): string {
+/**
+ * The name a pane goes by in the sidebar, the header, the tab strip and every notification. A pi
+ * session asleep in its pane goes by its own title: its launcher holds the pane under `zz <title>`,
+ * which is not a name to show (server/pi-sleep.ts).
+ */
+export function paneTitle(pane: Pick<PaneInfo, "pane_id" | "cwd" | "terminal_title" | "terminal_title_stripped"> & { hibernated?: { title: string } | null }): string {
+  const asleep = pane.hibernated?.title.trim();
+  if (asleep) return asleep;
   return pane.terminal_title_stripped ?? pane.terminal_title ?? pane.cwd ?? pane.pane_id;
 }
 

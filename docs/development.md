@@ -142,7 +142,7 @@ bun scripts/chat-greeting-demo-regression.ts  # an empty chat's greeting: centre
 bun scripts/composer-fit-demo-regression.ts   # one Send/Stop control, pending Send now actions, context/label fit and Chat font sizing
 bun scripts/held-rows-demo-regression.ts      # held messages: the fold under an approval card, its button, a row's error
 bun scripts/sidebar-activity-demo-regression.ts # Agents order Activity and pins: blocked pinned, recency, Pin agent / Unpin agent and Pin workspace / Unpin workspace from a right-click and the context-menu key, and the ⋯ on a phone
-bun scripts/prompt-dock-demo-regression.ts    # the prompt card docked over the input card: its place, its height on a short phone, the grip, a typed pick
+bun scripts/prompt-dock-demo-regression.ts    # the prompt card docked over the input card: its place, its height on a short phone, the grip, a typed pick; pi's sleep card, Asleep row, a sleeping session's title in the header and the workspace list, the session picker and the thinking-level selector at 390 and 320 px
 bun scripts/plugin-actions-demo-regression.ts # a plugin action that ends after the server stopped waiting: the late failure said, a traceback's height on a phone with its keyboard up
 bun scripts/font-swap-demo-regression.ts      # the app's faces arriving late on a slow link: a reader at the end of a chat stays there, a tab strip the user scrolled stays put
 bun scripts/narrow-pane-demo-regression.ts    # a split pane under 80 columns: the smaller font, a zoom, and a pane no font can bring to 80

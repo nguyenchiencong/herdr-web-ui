@@ -10,6 +10,7 @@ import { focusFollowsAnswer, pressOrigin, type TypedAnswer } from "../lib/prompt
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useT } from "../lib/i18n.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
+import { ConfirmDialog } from "./ConfirmDialog.tsx";
 
 /**
  * One card is one occurrence of a prompt on one pane: its owner mounts a new card (a `key`) for
@@ -35,6 +36,11 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
   const [custom, setCustom] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // a sleeping session's Quit ends it: asked first, as anything that cannot be undone is
+  const [quitting, setQuitting] = useState(false);
+  // a session picker's search: typed here, and sent on Enter or Search, never on a key; the server's text is shown when it changes
+  const [searchDraft, setSearchDraft] = useState(prompt.search?.value ?? "");
+  useEffect(() => { setSearchDraft(prompt.search?.value ?? ""); }, [prompt.search?.value]);
   const cardRef = useRef<HTMLElement | null>(null);
   const confirmRef = useRef<HTMLDivElement | null>(null);
   // the control Enter or Space last went down on: the click that follows on it is that key's
@@ -115,6 +121,12 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
     return { text, recommended: text !== label };
   };
   const hasChoices = prompt.options.some((_, index) => index !== prompt.custom_option_index);
+  // pi's session picker: its rows are sessions (no keycaps), and its own controls are offered as actions
+  const picker = prompt.search !== undefined || prompt.actions !== undefined;
+  const action = (id: string) => prompt.actions?.find((entry) => entry.id === id);
+  // the scope control moves to the other scope, so the scope it does not move to is the one showing
+  const scopeControl = action("scope");
+  const scopeShowing = scopeControl === undefined ? null : scopeControl.to === "all" ? "current" : "all";
   const openFile = useContext(OpenFileContext);
   const planFile = prompt.plan_file;
 
@@ -129,7 +141,8 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
       <header className="prompt-card-header">
         {/* read, not drawn: the title is the card's one red */}
         <span className="visually-hidden">{t("input needed")}</span>
-        <h2>{prompt.title}</h2>
+        {/* pi's session picker has no title: its question says what it is, and no empty heading is read */}
+        {prompt.title !== "" && <h2>{prompt.title}</h2>}
         {/* the card shows a plan in its short box; the file viewer draws the whole of it as Markdown */}
         {planFile && openFile && (
           <button type="button" className="btn btn-ghost prompt-card-plan-file" onClick={() => openFile(planFile)}>
@@ -160,8 +173,23 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
       )}
       {/* the reference text (a command, a plan, a diff) is the one part that gives way when the card is short */}
       {prompt.body !== null && prompt.body.length > 0 && <pre className={`prompt-card-body${prompt.body.includes("\n") ? "" : " is-line"}`}>{prompt.body}</pre>}
+      {prompt.search !== undefined && (
+        <form className="prompt-card-search" role="search" onSubmit={(event) => { event.preventDefault(); if (!pending) void answer({ search_text: searchDraft }); }}>
+          <input className="input prompt-card-search-input" type="search" value={searchDraft} maxLength={200} disabled={pending} aria-label={t("Search sessions")} placeholder={t("Search sessions")} enterKeyHint="search" onChange={(event) => setSearchDraft(event.currentTarget.value)} />
+          <button type="submit" className="btn" disabled={pending}>{t("Search")}</button>
+        </form>
+      )}
+      {scopeShowing !== null && (
+        <div className="prompt-card-scope" role="group" aria-label={t("Sessions to show")}>
+          {(["current", "all"] as const).map((scope) => (
+            <button key={scope} type="button" className={`btn prompt-card-scope-option${scopeShowing === scope ? " btn-primary" : ""}`} aria-pressed={scopeShowing === scope} disabled={pending || scopeShowing === scope} onClick={(event) => void answer({ action: "scope" }, event)}>
+              {scope === "current" ? t("Current folder") : t("All")}
+            </button>
+          ))}
+        </div>
+      )}
       {hasChoices && (
-        <div className="prompt-card-options" role={prompt.multi_select ? "group" : undefined} aria-label={prompt.multi_select ? prompt.question : undefined}>
+        <div className={`prompt-card-options${picker ? " is-picker" : ""}`} role={prompt.multi_select ? "group" : undefined} aria-label={prompt.multi_select ? prompt.question : undefined}>
           {prompt.options.map((option, index) => {
             if (index === prompt.custom_option_index) return null;
             const { text, recommended } = labelOf(option.label);
@@ -184,11 +212,24 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
               );
             }
             return (
-              <button key={index} type="button" className={`prompt-card-option${described}${typedAnswer?.option_index === index ? " is-typed" : ""}`} disabled={pending} onClick={(event) => void answer({ option_index: index }, event)}>
-                {number} {content}
+              <button key={index} type="button" className={`prompt-card-option${described}${picker ? " is-session" : ""}${typedAnswer?.option_index === index ? " is-typed" : ""}`} disabled={pending} onClick={(event) => (prompt.asleep && index === 1 ? setQuitting(true) : void answer({ option_index: index }, event))}>
+                {/* a sleeping session's card is not typed into from the composer (a message wakes it): no keycap */}
+                {picker || prompt.asleep ? null : number} {content}
               </button>
             );
           })}
+        </div>
+      )}
+      {picker && (
+        <div className="prompt-card-picker-footer">
+          {prompt.window !== undefined && prompt.options.length > 0 && (
+            <span className="prompt-card-range">{t("{first}\u2013{last} of {total}", { first: prompt.window.first + 1, last: prompt.window.first + prompt.options.length, total: prompt.window.total })}</span>
+          )}
+          <span className="prompt-card-picker-actions">
+            {action("earlier") !== undefined && <button type="button" className="btn" disabled={pending} onClick={(event) => void answer({ action: "earlier" }, event)}>{t("Earlier")}</button>}
+            {action("later") !== undefined && <button type="button" className="btn" disabled={pending} onClick={(event) => void answer({ action: "later" }, event)}>{t("Later")}</button>}
+            {action("cancel") !== undefined && <button type="button" className="btn" disabled={pending} onClick={(event) => void answer({ action: "cancel" }, event)}>{t("Cancel")}</button>}
+          </span>
         </div>
       )}
       {prompt.multi_select && (
@@ -221,6 +262,7 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
           </span>
         </div>
       )}
+      {quitting && <ConfirmDialog title={t("Quit this session?")} body={t("Quitting ends this pi session in the pane. Its transcript stays where pi keeps its sessions.")} confirmLabel={t("Quit")} onConfirm={async () => { await answer({ option_index: 1 }); setQuitting(false); }} onClose={() => setQuitting(false)} />}
       {error !== null && <p className="prompt-card-error" role="alert">{error}</p>}
     </section>
   );

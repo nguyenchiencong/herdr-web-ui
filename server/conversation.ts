@@ -48,7 +48,10 @@ import { omoProcessIdentity, omoSessionForPane } from "./omo.ts";
 import { processStartedAt } from "./process-start.ts";
 import { ompHeldTranscript } from "./omp.ts";
 import { forgetOpencodeRead, forgetOpencodeState, OPENCODE_IMAGE_REF, opencodeConversation, opencodeDatabasePath, opencodeImage, opencodeReadKey, opencodeSessionId, opencodeToolOutput } from "./opencode.ts";
-import { piTranscriptInStore, piTranscriptPath, unwrittenSession } from "./pi.ts";
+import { defaultPiSessionDir, piTranscriptInStore, piTranscriptPath, unwrittenSession } from "./pi.ts";
+import { piAgentDir } from "./pi-models.ts";
+import { hasSleepTitle, readSleepRecords, sleepingRecordOf } from "./pi-sleep.ts";
+import { isSleepAgentLabel, shownAgent } from "../shared/sleep-agent.ts";
 import { defaultDevinDbPath, DevinHistoryUnavailable, devinConversation, forgetDevinState } from "./devin.ts";
 import { forgetGrokState, grokProjection, grokToolOutput, parseGrokTranscript, GrokUnavailable } from "./grok.ts";
 import { resolveGrokStore } from "./grok-store.ts";
@@ -1266,12 +1269,13 @@ export type NativeTranscript =
  */
 async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: string, panes?: HerdrPane[], opencodeDb?: string, hermesHome?: string, grokHome?: string): Promise<ResolvedTranscript> {
   const paneId = pane.pane_id;
-  let agent = pane.agent ?? pane.agent_session?.agent ?? "";
+  // the launcher's label is no agent (shared/sleep-agent.ts): a pane that carries it without a sleeping session has none
+  let agent = isSleepAgentLabel(pane.agent) ? "" : pane.agent ?? pane.agent_session?.agent ?? "";
   // herdr names no agent for this pane: a session report an earlier agent left behind says
   // nothing about what runs now, so the pane's processes are asked before it is followed.
   // A pane herdr does label is not asked: the lookup would cost every transcript lookup an RPC (and
   // a process-table read on Windows), and a gjc below another agent would take its chat.
-  if (!pane.agent) {
+  if (!shownAgent(pane.agent, false)) {
     const info = await herdrRpc<{ process_info?: { shell_pid?: number; foreground_processes?: { argv?: unknown }[] } }>(
       "pane.process_info", { pane_id: paneId },
     ).catch(() => null);
@@ -1287,6 +1291,13 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
   // session headers name the one they run in
   const sessionCwd = typeof pane.foreground_cwd === "string" && pane.foreground_cwd.length > 0 ? pane.foreground_cwd : cwd;
   try {
+    // a pi session asleep in its pane: its sleep record names the transcript, whichever agent herdr names for the pane (read only)
+    const sleeping = hasSleepTitle(pane) ? sleepingRecordOf(pane, readSleepRecords(piAgentDir())) : null;
+    if (sleeping !== null) {
+      const path = piTranscriptInStore(sleeping.sessionFile, defaultPiSessionDir());
+      if (path === null) throw new ConversationUnavailable("no_session_path");
+      return { source: "pi-transcript", path };
+    }
     if (agent === "grok") {
       const found = await resolveGrokStore(pane, grokHome);
       if (!found) throw new ConversationUnavailable("no_session_path");

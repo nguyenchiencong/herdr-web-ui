@@ -1,0 +1,22 @@
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Resume Session (Current Folder)                                      ◉ Current Folder | ○ All  Name: All  Sort: Threaded
+tab scope · re:<pattern> regex · "phrase" exact
+ctrl+s sort · ctrl+n named · ctrl+d delete · ctrl+p path (off) · ctrl+r rename
+
+> session 1                                                                                                             
+
+› session 1: wire the sleep card                                                                                    5 2d
+  session 10: hello                                                                                                23 1w
+  session 11: review the picker                                                                                    25 1w
+  session 12: fix the composer scroll on iPhone when the keyboard opens                                            27 1w
+  session 13: wire the sleep card                                                                                  29 2w
+  session 14: hello                                                                                                31 2w
+  session 15: review the picker                                                                                    33 2w
+  session 16: fix the composer scroll on iPhone when the keyboard opens                                            35 2w
+  session 17: wire the sleep card                                                                                  37 2w
+  session 18: hello                                                                                                39 2w
+  (1/12)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

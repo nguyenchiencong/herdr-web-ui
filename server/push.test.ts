@@ -230,6 +230,13 @@ describe("push delivery", () => {
     expect(fake.received.map((received) => received.payload.title)).toEqual(["claude: new task", "claude: old task"]);
   });
 
+  it("names a pi session asleep in its pane by its own title when its terminal ends, not by the launcher's zz title", async () => {
+    const push = subscribed();
+    push.seed([{ ...pane("w1:p1", "unknown", "zz .pi"), hibernated: { agent: "pi", title: "refactor", slept_at: "2026-10-17T07:00:00.000Z", next_due_at: null } }]);
+    await push.onEnded("w1:p1");
+    expect(fake.received.map((received) => received.payload.title)).toEqual(["refactor"]);
+  });
+
   it("tells the device a pane's terminal ended, under its last known title", async () => {
     const push = subscribed();
     push.seed([pane("w1:p1", "working", "vim notes.md")]);

@@ -1,0 +1,12 @@
+
+──────────────────────────────────────────────
+
+◉ Current Folder | ○ All  Name: All  Sort: Thr
+tab scope · re:<pattern> regex · "phrase" exa…
+ctrl+s sort · ctrl+n named · ctrl+d delete · …
+
+>                                             
+
+  No sessions in current folder. Press Tab to…
+
+──────────────────────────────────────────────

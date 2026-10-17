@@ -11,6 +11,7 @@ import { ArrowLeft, ArrowRight, Ellipsis, Pencil, Plus, Terminal, X } from "luci
 import "./TabStrip.css";
 
 import type { HerdrPane, HerdrTab, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import { shownAgent } from "../../shared/sleep-agent.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { ApiError } from "../lib/api.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
@@ -329,7 +330,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
     const groups: RowMenuItem[][] = [
       own.length < 2 ? [] : own.map((pane): RowMenuItem => ({
         id: `pane:${pane.pane_id}`, label: displayPaneTitle(pane), icon: Terminal,
-        glyph: pane.agent ? <AgentMark agent={pane.agent} size={16} /> : undefined,
+        glyph: shownAgent(pane.agent, (pane as HerdrPane).hibernated != null) ? <AgentMark agent={shownAgent(pane.agent, (pane as HerdrPane).hibernated != null) ?? ""} size={16} /> : undefined,
         current: pane.pane_id === selectedPane.pane_id, run: () => onSelectPane(pane.pane_id),
       })),
       paneItems,

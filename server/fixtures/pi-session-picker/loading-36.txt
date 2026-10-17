@@ -1,0 +1,12 @@
+
+────────────────────────────────────
+
+○ Current Folder | Loading ...  Name
+tab scope · re:<pattern> regex · "p…
+ctrl+s sort · ctrl+n named · ctrl+d…
+
+>                                   
+
+  No sessions in current folder. Pr…
+
+────────────────────────────────────

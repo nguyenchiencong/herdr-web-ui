@@ -6,9 +6,12 @@ import { chromium, type Page } from "playwright-core";
 import { browserEvidencePage, browserEvidenceTracing, startBrowserEvidence } from "./browser-evidence.ts";
 import type { BrowserEvidenceSession } from "./browser-evidence.ts";
 import { appFaces } from "./app-faces.ts";
+import { sheetsSettled } from "./sheets-settled.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
+import { SPECS } from "../site/demo/fixtures.ts";
+import { parseInteractivePrompt } from "../server/prompt.ts";
 
 // The prompt card's place, on the unmodified app over the demo's fixture transport: the demo's
 // "web" pane has an approval open. A second, tall form (steps, reference text, descriptions, a
@@ -49,6 +52,34 @@ const REVIEW = {
   options: [{ label: "Approve", description: null }, { label: LONG_LABEL, description: null }, { label: "Reject", description: null }],
   multi_select: false, custom_option_index: null,
 };
+
+/** pi's `/resume` picker as server/prompt.ts reads pi's own renders (server/fixtures/pi-session-picker) */
+const piPicker = (name: string): unknown => {
+  const prompt = parseInteractivePrompt("pi", readFileSync(join(repo, "server", "fixtures", "pi-session-picker", `${name}-120.txt`), "utf8"));
+  assert.ok(prompt !== null, `${name}: the picker is read`);
+  return prompt;
+};
+/** pi's `/thinking` level selector as server/prompt.ts reads pi's own renders (server/fixtures/pi-thinking-selector) */
+const piThinking = (name: string): unknown => {
+  const prompt = parseInteractivePrompt("pi", readFileSync(join(repo, "server", "fixtures", "pi-thinking-selector", `${name}-120.txt`), "utf8"));
+  assert.ok(prompt !== null, `${name}: the selector is read`);
+  return prompt;
+};
+/** pi's sleep card for the demo's pi pane, as server/prompt.ts parsePiSleep hands it over */
+const SLEEP = {
+  id: "demo-sleep", agent: "pi", kind: "question", title: "Session asleep",
+  question: "Ship the retry flag is asleep in this pane. Resume it to continue, or quit it.", body: null,
+  options: [{ label: "Resume", description: "Wakes the session in this pane" }, { label: "Quit", description: "Ends the session and leaves the pane" }],
+  multi_select: false, custom_option_index: null, asleep: true,
+};
+/** the demo's pi pane: a pane the fixtures predate, numbered from w100 by the transport's backfillPanes */
+const PI_KEY = "cli";
+const piPane = (() => {
+  const recorded = new Set(Object.keys(panes));
+  const at = SPECS.filter((spec) => !recorded.has(spec.key)).findIndex((spec) => spec.key === PI_KEY);
+  assert.ok(at >= 0, "the demo has a pi pane");
+  return `w${(100 + at).toString(36)}:p1`;
+})();
 
 interface Box { top: number; bottom: number; left: number; right: number }
 interface Layout {
@@ -883,6 +914,271 @@ try {
         assert.ok(fit.width <= fit.room, `"${fit.text}" is ${fit.width}px in ${fit.room}px`);
       } catch (error) { await preserveFailure(page, error); } finally { await close(); }
       console.log("PASS the placeholder with a custom answer fits a 390px message box");
+
+      // ---- pi: the sleep card, the session picker and the Asleep row, on a phone ----
+      {
+        /** the demo's pi pane on a phone: asleep (its annotation, as the server adds it) or awake, with this card */
+        const openPi = async ({ width, height, asleep = false, prompt }: { width: number; height: number; asleep?: boolean; prompt: unknown }): Promise<Opened> => {
+          const context = await browser.newContext({ viewport: { width, height }, locale: "en-US", hasTouch: true, isMobile: true });
+          await context.addInitScript(([asleepKey, pane, next]) => {
+            localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ theme: "dark" }));
+            if (asleepKey !== "") (window as unknown as { demoAsleep: string }).demoAsleep = asleepKey as string;
+            window.addEventListener("DOMContentLoaded", () => { (window as unknown as { panePrompts: Record<string, unknown> }).panePrompts[pane as string] = next; });
+          }, [asleep ? PI_KEY : "", piPane, prompt] as const);
+          await context.addInitScript(() => {
+            const keyboard = Object.assign(new EventTarget(), { height: 0 });
+            Object.defineProperty(keyboard, "boundingRect", { get: () => new DOMRect(0, 0, window.innerWidth, keyboard.height) });
+            Object.defineProperty(navigator, "virtualKeyboard", { configurable: true, value: keyboard });
+          });
+          const page = await context.newPage();
+          const errors: string[] = [];
+          page.on("pageerror", (error) => errors.push(error.message));
+          try {
+            await page.goto(url.replace(/\?pane=.*$/, `?pane=${encodeURIComponent(piPane)}`));
+            await page.locator(".conn-live").waitFor({ state: "attached" });
+            await page.locator(".terminal-stack.is-chat").waitFor();
+            await page.locator(".prompt-card").getByText((prompt as { question: string }).question).waitFor();
+            await appFaces(page);
+            return { page, errors, close: () => context.close(), shot: async (name) => { if (shots !== null) await page.screenshot({ path: join(shots, `${name}.png`) }); } };
+          } catch (error) { await context.close(); throw error; }
+        };
+        /** what a phone needs of a card: every control a finger's size, nothing wider than the screen, the card within it */
+        const fitOf = (page: Page) => page.evaluate(() => {
+          const card = document.querySelector<HTMLElement>(".prompt-card")!;
+          const box = card.getBoundingClientRect();
+          const targets = [...card.querySelectorAll<HTMLElement>("button, input")].filter((node) => node.getClientRects().length > 0)
+            .map((node) => { const rect = node.getBoundingClientRect(); return { name: (node.getAttribute("aria-label") ?? node.textContent ?? "").trim().slice(0, 40), width: Math.round(rect.width), height: Math.round(rect.height) }; });
+          const outside = [...card.querySelectorAll<HTMLElement>("*")].filter((node) => { const rect = node.getBoundingClientRect(); return rect.width > 0 && (rect.left < box.left - 0.5 || rect.right > box.right + 0.5); })
+            .map((node) => node.className || node.tagName);
+          const list = card.querySelector<HTMLElement>(".prompt-card-options.is-picker");
+          // every row holds its own text: none is squeezed so that its label or description runs into the next one
+          const squeezed = [...card.querySelectorAll<HTMLElement>(".prompt-card-option")].filter((row) => row.scrollHeight > row.clientHeight + 1).map((row) => row.textContent);
+          return {
+            targets,
+            outside,
+            squeezed,
+            pageWide: document.documentElement.scrollWidth > window.innerWidth,
+            cardWide: card.scrollWidth > card.clientWidth + 1,
+            card: { top: box.top, bottom: box.bottom, height: box.height },
+            cardScrolls: card.scrollHeight > card.clientHeight + 1,
+            list: list === null ? null : { scrolls: list.scrollHeight > list.clientHeight + 1, overflow: getComputedStyle(list).overflowY },
+            viewport: window.innerHeight,
+          };
+        });
+        const fits = (fit: Awaited<ReturnType<typeof fitOf>>, label: string, floor = 44): void => {
+          const small = fit.targets.filter((target) => target.height < floor || target.width < floor);
+          assert.deepEqual(small, [], `${label}: every control is at least ${floor}px`);
+          assert.deepEqual(fit.outside, [], `${label}: nothing runs past the card's sides`);
+          assert.deepEqual(fit.squeezed, [], `${label}: every row is as tall as its text`);
+          assert.equal(fit.pageWide, false, `${label}: the page does not scroll sideways`);
+          assert.equal(fit.cardWide, false, `${label}: the card does not scroll sideways`);
+          assert.ok(fit.card.top >= 0 && fit.card.bottom <= fit.viewport, `${label}: the card is inside the screen (${fit.card.top}–${fit.card.bottom} of ${fit.viewport})`);
+        };
+        const card = (page: Page) => page.locator(".prompt-card");
+        const sizes = [{ width: 390, height: 844 }, { width: 320, height: 700 }];
+
+        // the sleep card: Resume and Quit, and Quit asks first
+        for (const size of sizes) {
+          const { page, errors, shot, close } = await openPi({ ...size, asleep: true, prompt: SLEEP });
+          const label = `sleep card ${size.width}x${size.height}`;
+          try {
+            assert.equal(await card(page).locator("h2").textContent(), "Session asleep");
+            assert.equal(await card(page).locator(".prompt-card-question").textContent(), SLEEP.question);
+            assert.deepEqual(await card(page).locator(".prompt-card-option-label").allTextContents(), ["Resume", "Quit"]);
+            assert.deepEqual(await card(page).locator(".prompt-card-option-description").allTextContents(), ["Wakes the session in this pane", "Ends the session and leaves the pane"]);
+            fits(await fitOf(page), label);
+            await shot(`pi-sleep-card-${size.width}x${size.height}`);
+            await card(page).getByRole("button", { name: /^Quit/ }).tap();
+            const dialog = page.getByRole("alertdialog", { name: "Quit this session?" });
+            await dialog.waitFor();
+            await sheetsSettled(page);
+            assert.match(await dialog.textContent() ?? "", /Quitting ends this pi session in the pane\. Its transcript stays where pi keeps its sessions\./);
+            const dialogFit = await dialog.evaluate((node) => {
+              const box = node.getBoundingClientRect();
+              return { left: box.left, right: box.right, wide: document.documentElement.scrollWidth > window.innerWidth,
+                buttons: [...node.querySelectorAll("button")].map((button) => ({ name: button.textContent, height: Math.round(button.getBoundingClientRect().height), width: Math.round(button.getBoundingClientRect().width) })) };
+            });
+            assert.ok(dialogFit.left >= 0 && dialogFit.right <= size.width && !dialogFit.wide, `${label}: the dialog fits the screen`);
+            assert.deepEqual(dialogFit.buttons.map((button) => button.name), ["Cancel", "Quit"]);
+            // the app's shared confirm dialog keeps the app's --touch-target (40px, DESIGN.md), as every confirm does
+            for (const button of dialogFit.buttons) assert.ok(button.height >= 40 && button.width >= 44, `${label}: the dialog's ${button.name} is ${button.width}x${button.height}`);
+            assert.deepEqual(await answersOf(page), [], "opening the dialog quits nothing");
+            await shot(`pi-sleep-quit-confirm-${size.width}x${size.height}`);
+            await dialog.getByRole("button", { name: "Cancel" }).tap();
+            await dialog.waitFor({ state: "detached" });
+            assert.deepEqual(await answersOf(page), [], "Cancel quits nothing");
+            await card(page).getByRole("button", { name: /^Quit/ }).tap();
+            await dialog.getByRole("button", { name: "Quit" }).tap();
+            await page.waitForFunction(() => (window as unknown as { formAnswers: unknown[] }).formAnswers.length === 1);
+            assert.deepEqual((await answersOf(page)).map((answer) => answer.option_index), [1], "Quit answers the card's second option");
+            assert.deepEqual(errors, []);
+          } finally { await close(); }
+        }
+        console.log("PASS pi's sleep card: Resume and Quit at 44px on a 390 and a 320px phone; Quit asks in a dialog first, Cancel there quits nothing");
+
+        // the Asleep row: the pane's annotation lists it among the agents, dimmed, saying Asleep
+        for (const size of sizes) {
+          const { page, errors, shot, close } = await openPi({ ...size, asleep: true, prompt: SLEEP });
+          const label = `asleep row ${size.width}x${size.height}`;
+          try {
+            await page.locator('button[aria-controls="workspace-drawer"]').tap();
+            const toggle = page.locator(".agents-sidebar .agent-section-toggle");
+            if (await toggle.getAttribute("aria-expanded") === "false") await toggle.tap();
+            const row = page.locator(`.agents-sidebar .agent-item[data-pane="${piPane}"]`);
+            await row.waitFor();
+            // the drawer has slid in: no transition or animation is still moving it
+            await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"), undefined, { timeout: 5_000 });
+            await shot(`pi-sidebar-asleep-row-${size.width}x${size.height}`);
+            assert.equal(await row.evaluate((node) => node.classList.contains("is-asleep")), true, `${label}: the row is marked asleep`);
+            assert.equal(await row.locator(".agent-asleep").textContent(), "Asleep");
+            assert.equal(await row.locator(".agent-row-state .agent-asleep-mark").count(), 1, `${label}: a moon stands where a status would`);
+            assert.equal(await row.locator(".agent-title").first().textContent(), "Ship the retry flag", `${label}: the row names the session, not the launcher's zz title`);
+            const rowFit = await row.evaluate((node) => {
+              const drawer = node.closest<HTMLElement>("#workspace-drawer") ?? document.body;
+              const edge = drawer.getBoundingClientRect().right;
+              return {
+                wide: document.documentElement.scrollWidth > window.innerWidth || drawer.scrollWidth > drawer.clientWidth + 1,
+                past: [...node.querySelectorAll<HTMLElement>("*")].filter((child) => { const rect = child.getBoundingClientRect(); return rect.width > 0 && rect.right > Math.min(edge, window.innerWidth) + 0.5; }).map((child) => child.className),
+                select: Math.round(node.querySelector(".agent-select")!.getBoundingClientRect().height),
+                badge: (() => { const badge = node.querySelector(".agent-asleep")!.getBoundingClientRect(); const row = node.getBoundingClientRect(); return badge.right <= row.right + 0.5 && badge.width > 0; })(),
+              };
+            });
+            assert.equal(rowFit.wide, false, `${label}: nothing scrolls sideways`);
+            assert.deepEqual(rowFit.past, [], `${label}: nothing of the row runs past the drawer`);
+            assert.ok(rowFit.select >= 44, `${label}: the row is ${rowFit.select}px tall`);
+            assert.equal(rowFit.badge, true, `${label}: Asleep is drawn inside the row`);
+            assert.deepEqual(errors, []);
+          } finally { await close(); }
+        }
+        console.log("PASS the Asleep row: a hibernated pane is listed among the agents with its session's title and Asleep, inside a 390 and a 320px drawer");
+
+        // pi's session picker, in each state pi draws
+        const states: { name: string; fixture: string; check: (page: Page) => Promise<void> }[] = [
+          { name: "list", fixture: "list", check: async (page) => {
+            assert.equal(await card(page).getByRole("searchbox", { name: "Search sessions" }).count(), 1);
+            assert.equal(await card(page).getByRole("button", { name: "Search", exact: true }).count(), 1);
+            assert.deepEqual(await card(page).getByRole("group", { name: "Sessions to show" }).getByRole("button").evaluateAll((nodes) => nodes.map((node) => `${node.textContent}:${node.getAttribute("aria-pressed")}`)), ["Current folder:true", "All:false"]);
+            assert.deepEqual(await card(page).locator(".prompt-card-option-label").allTextContents(), ["refactor the sleep card", "session 1: wire the sleep card", "session 2: hello"]);
+            assert.deepEqual(await card(page).locator(".prompt-card-option-description").allTextContents(), ["3 messages", "5 messages", "7 messages"]);
+            assert.equal(await card(page).locator(".prompt-card-range").textContent(), "1–3 of 3");
+            assert.deepEqual(await card(page).locator(".prompt-card-picker-actions button").allTextContents(), ["Cancel"]);
+          } },
+          { name: "mid-list", fixture: "cursor-15-of-23", check: async (page) => {
+            assert.equal(await card(page).locator(".prompt-card-option.is-session").count(), 10);
+            assert.equal(await card(page).locator(".prompt-card-range").textContent(), "10–19 of 23");
+            assert.deepEqual(await card(page).locator(".prompt-card-picker-actions button").allTextContents(), ["Earlier", "Later", "Cancel"]);
+            // the page of sessions scrolls inside the card: its last row is reached there, the page stays put
+            const scroll = await card(page).locator(".prompt-card-options.is-picker").evaluate((list) => {
+              const before = list.scrollTop;
+              list.scrollTop = list.scrollHeight;
+              const last = list.lastElementChild!.getBoundingClientRect();
+              const box = list.getBoundingClientRect();
+              const reached = last.bottom <= box.bottom + 1 && last.top >= box.top - 1;
+              const moved = list.scrollTop > before;
+              list.scrollTop = 0;
+              return { moved, reached, page: document.scrollingElement!.scrollTop };
+            });
+            assert.deepEqual(scroll, { moved: true, reached: true, page: 0 }, "the list scrolls in the card to its last row");
+          } },
+          { name: "scope-all", fixture: "scope-all", check: async (page) => {
+            assert.deepEqual(await card(page).getByRole("group", { name: "Sessions to show" }).getByRole("button").evaluateAll((nodes) => nodes.map((node) => `${node.textContent}:${node.getAttribute("aria-pressed")}`)), ["Current folder:false", "All:true"]);
+            assert.equal(await card(page).locator(".prompt-card-question").textContent(), "Resume a session from any folder");
+            assert.deepEqual(await card(page).locator(".prompt-card-option-description").allTextContents(), ["C:/Users/x/Dev/app · 3 messages", "C:/Users/x/Dev/app · 5 messages", "C:/Users/x/Dev/app · 7 messages"]);
+          } },
+          { name: "loading", fixture: "loading", check: async (page) => {
+            assert.equal(await card(page).locator(".prompt-card-search, .prompt-card-scope, .prompt-card-option, .prompt-card-range").count(), 0, "a list still loading offers nothing but Cancel");
+            assert.deepEqual(await card(page).locator("button").allTextContents(), ["Cancel"]);
+          } },
+          { name: "delete-confirm", fixture: "delete-confirm", check: async (page) => {
+            assert.equal(await card(page).locator(".prompt-card-search, .prompt-card-scope, .prompt-card-option, .prompt-card-range").count(), 0, "a delete asked in the terminal offers Cancel alone");
+            assert.deepEqual(await card(page).locator("button").allTextContents(), ["Cancel"]);
+          } },
+          { name: "empty", fixture: "empty-current", check: async (page) => {
+            assert.equal(await card(page).locator(".prompt-card-option, .prompt-card-range").count(), 0);
+            assert.equal(await card(page).getByRole("searchbox", { name: "Search sessions" }).count(), 1);
+            assert.deepEqual(await card(page).locator(".prompt-card-picker-actions button").allTextContents(), ["Cancel"]);
+          } },
+        ];
+        for (const state of states) for (const size of sizes) {
+          const prompt = piPicker(state.fixture);
+          const { page, errors, shot, close } = await openPi({ ...size, prompt });
+          const label = `picker ${state.name} ${size.width}x${size.height}`;
+          try {
+            assert.equal(await card(page).locator(".prompt-card-question").textContent(), (prompt as { question: string }).question);
+            assert.equal(await card(page).locator("h2").count(), 0, `${label}: a picker without a title draws no empty heading`);
+            await state.check(page);
+            const fit = await fitOf(page);
+            fits(fit, label);
+            if (state.name === "mid-list") {
+              assert.equal(fit.list?.overflow, "auto");
+              assert.equal(fit.list?.scrolls, true, `${label}: ten rows scroll inside the card`);
+              // the list is the one scroller: the search, the scope and the paging stay in sight around it
+              assert.equal(fit.cardScrolls, false, `${label}: the card itself does not scroll as well (${fit.card.height}px)`);
+            }
+            await shot(`pi-picker-${state.name}-${size.width}x${size.height}`);
+            assert.deepEqual(errors, []);
+          } finally { await close(); }
+        }
+        console.log("PASS pi's session picker: list, mid-list, All, loading, delete and empty, at 44px controls inside a 390 and a 320px phone; ten rows scroll inside the card");
+
+        // the header, the workspace list, the tab strip and the document name a pi session asleep by its own title; its row keeps the pi mark
+        for (const size of sizes) {
+          const { page, errors, shot, close } = await openPi({ ...size, asleep: true, prompt: SLEEP });
+          const label = `header and workspace list ${size.width}x${size.height}`;
+          try {
+            await page.locator('button[aria-controls="workspace-drawer"]').tap();
+            const row = page.locator(`#workspace-drawer .pane-select[data-pane="${piPane}"]`);
+            await row.waitFor();
+            // the drawer has slid in: its own transition is over (the rest of the page may keep animating)
+            await page.waitForFunction(() => document.querySelector("#workspace-drawer")!.getAnimations().every((animation) => animation.playState !== "running"), undefined, { timeout: 5_000 });
+            // every text a reader gets from these places, tooltips and names included
+            const shown = await page.evaluate(() => {
+              const zones = [".context", "nav.sidebar-list", ".tab-strip"].flatMap((selector) => [...document.querySelectorAll<HTMLElement>(selector)]);
+              return [document.title, ...zones.flatMap((zone) => [zone.textContent ?? "", ...[...zone.querySelectorAll<HTMLElement>("[title], [aria-label]")].flatMap((node) => [node.getAttribute("title") ?? "", node.getAttribute("aria-label") ?? ""])])];
+            });
+            assert.deepEqual(shown.filter((text) => text.includes("zz ")), [], `${label}: no name shows the launcher's zz title`);
+            assert.equal(await page.title(), "Ship the retry flag · herdr", `${label}: the document is named by the session`);
+            assert.equal(await page.locator(".context-title-text").first().textContent(), "Ship the retry flag", `${label}: the header names the session`);
+            assert.equal(await row.locator(".workspace-name").textContent(), "Ship the retry flag", `${label}: the row names the session`);
+            assert.equal(await row.locator(".sidebar-mark .agent-mark.pi").count(), 1, `${label}: the row keeps the pi mark`);
+            assert.equal(await row.locator(".sidebar-status").count(), 0, `${label}: the moon takes the status cell`);
+            assert.equal(await row.locator(".sidebar-asleep").getAttribute("aria-label"), "Asleep", `${label}: the moon is labelled Asleep`);
+            const moon = await row.evaluate((node) => {
+              const drawer = node.closest("#workspace-drawer")!.getBoundingClientRect();
+              const box = node.querySelector(".sidebar-asleep svg")!.getBoundingClientRect();
+              return { width: box.width, height: box.height, inside: box.left >= drawer.left && box.right <= drawer.right };
+            });
+            assert.deepEqual([moon.width, moon.height], [12, 12], `${label}: the moon is the Agents row's size`);
+            assert.equal(moon.inside, true, `${label}: the moon is not clipped by the drawer`);
+            assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, `${label}: nothing scrolls sideways`);
+            await shot(`pi-header-workspace-asleep-${size.width}x${size.height}`);
+            assert.deepEqual(errors, []);
+          } finally { await close(); }
+        }
+        console.log("PASS a pi session asleep is named by its own title in the header, the document, the tab strip and the workspace list; its row keeps the pi mark and a moon labelled Asleep, at 390 and 320px");
+
+        // pi's /thinking selector: each level is an option, the current one named in the question, and a tap sets the level it names
+        const thinking = piThinking("thinking");
+        for (const size of sizes) {
+          const { page, errors, shot, close } = await openPi({ ...size, prompt: thinking });
+          const label = `thinking card ${size.width}x${size.height}`;
+          try {
+            assert.equal(await card(page).locator("h2").count(), 0, `${label}: a selector without a title draws no empty heading`);
+            assert.equal(await card(page).locator(".prompt-card-question").textContent(), "Select thinking level (currently high)");
+            assert.deepEqual(await card(page).locator(".prompt-card-option-label").allTextContents(), ["off", "minimal", "low", "medium", "high", "xhigh"]);
+            assert.equal(await card(page).locator(".prompt-card-option-description").count(), 0, `${label}: a level's row names the level and nothing more`);
+            // tap targets and no horizontal overflow: a level row is the coarse pointer's --touch-target (40px, DESIGN.md), as an approval's row is; the picker's 44px rows are its own rule
+            fits(await fitOf(page), label, 40);
+            await shot(`pi-thinking-card-${size.width}x${size.height}`);
+            assert.equal(await card(page).locator(".prompt-card-option").nth(5).locator(".prompt-card-option-label").textContent(), "xhigh");
+            await card(page).locator(".prompt-card-option").nth(5).tap();
+            await page.waitForFunction(() => (window as unknown as { formAnswers: unknown[] }).formAnswers.length === 1);
+            assert.deepEqual(await answersOf(page), [{ pane_id: piPane, prompt_id: (thinking as { id: string }).id, option_index: 5 }], `${label}: the tap answers the level it names`);
+            assert.deepEqual(errors, []);
+          } finally { await close(); }
+        }
+        console.log("PASS pi's thinking-level selector: its six levels are the card's options, each at the coarse pointer's 40px target with no sideways overflow on a 390 and a 320px phone; a tap answers the level it names");
+      }
     } finally { await browser.close(); }
   } finally { server.stop(); }
 } finally { rmSync(app, { recursive: true, force: true }); }

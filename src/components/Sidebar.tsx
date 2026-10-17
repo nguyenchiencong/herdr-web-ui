@@ -1,9 +1,10 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type AnimationEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, Layers, ListChecks, Pencil, Pin, PinOff, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, Layers, ListChecks, Moon, Pencil, Pin, PinOff, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
 import "./Sidebar.css";
 
-import type { AgentStatus, PaneInfo, PlanSummary, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import type { AgentStatus, HibernatedPane, PaneInfo, PlanSummary, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import { shownAgent } from "../../shared/sleep-agent.ts";
 import { paneTitle } from "../../shared/notify-policy.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
@@ -27,7 +28,7 @@ import { useWorktreeBranches } from "../lib/useWorktreeBranches.ts";
 import { watchTouchReorder } from "../lib/touchReorder.ts";
 import { placeBlock, workspaceMoves } from "../lib/workspaceOrder.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
-import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
+import { asleepCueShown, paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { currentSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneWorkspacePins, setSidebarPins, splitPinnedGroups, subscribeSidebarPins, toggleSidebarPin, workspacePinKey, type WorkspaceGroup } from "../lib/sidebarPins.ts";
 
@@ -48,19 +49,28 @@ function storedWorktreeCollapsed(machineId: string, repoKeys: string[]): Set<str
 export { paneTitle };
 
 /**
- * The title a row or the header shows: the user's label, else the live title minus its chrome,
- * a working directory written out shortened to its last folder (lib/paneName.ts).
+ * The title a row or the header shows: the user's label, else the pane's title minus its chrome (a
+ * sleeping pi session's own title, paneTitle), a working directory written out shortened to its last
+ * folder (lib/paneName.ts).
  */
-export function displayPaneTitle(pane: PaneInfo): string {
-  return pane.label?.trim() || shortPathTitle(stripPaneChrome(paneTitle(pane), pane.agent)) || pane.pane_id;
+export function displayPaneTitle(pane: PaneInfo & { hibernated?: HibernatedPane | null }): string {
+  return pane.label?.trim() || shortPathTitle(stripPaneChrome(paneTitle(pane), titledAgent(pane))) || pane.pane_id;
+}
+
+/**
+ * The agent whose chrome a pane's live title carries. A sleeping session's title is its own, and the launcher's label
+ * is no agent (shared/sleep-agent.ts), so neither is stripped.
+ */
+function titledAgent(pane: PaneInfo & { hibernated?: HibernatedPane | null }): string | null {
+  return pane.hibernated != null ? null : shownAgent(pane.agent, false);
 }
 
 /**
  * The title an alert names a pane by: as a row's, with the folder Codex adds after its thread
  * kept. A notification is read away from the row that says where the pane is.
  */
-export function alertPaneTitle(pane: PaneInfo): string {
-  return pane.label?.trim() || shortPathTitle(stripPaneChrome(paneTitle(pane), pane.agent, true)) || pane.pane_id;
+export function alertPaneTitle(pane: PaneInfo & { hibernated?: HibernatedPane | null }): string {
+  return pane.label?.trim() || shortPathTitle(stripPaneChrome(paneTitle(pane), titledAgent(pane), true)) || pane.pane_id;
 }
 
 /** herdr could not bring this pane back after a restart (0.9.3+ `restore_error`): a warning in the status cell, its reason on hover. */
@@ -73,6 +83,13 @@ export function RestoreErrorBadge({ reason }: { reason: string }) {
       <span className="visually-hidden">{label}</span>
     </span>
   );
+}
+
+/** A pi session asleep in its pane: the moon the Agents row draws where a status would be, said as Asleep to a reader. */
+function AsleepMark() {
+  const t = useT();
+  const label = t("Asleep");
+  return <span className="sidebar-asleep" role="img" aria-label={label} title={label}><Moon aria-hidden="true" /></span>;
 }
 
 /** Every breathing dot or glyph keeps the document clock's phase, so a row that starts working breathes in step with the rest. */
@@ -688,7 +705,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
           </span>}
           <span className="sidebar-pane-meta">
             <span className="visually-hidden">{markName(pane)}</span>
-            {online && pane.restore_error ? <RestoreErrorBadge reason={pane.restore_error} /> : <StatusBadge compact status={online ? rollupStatus(statusPanes.map((candidate) => activity.status(machineId, candidate))) : undefined} />}
+            {asleepCueShown(agentByPane.get(pane.pane_id)?.hibernated, online) ? <AsleepMark /> : online && pane.restore_error ? <RestoreErrorBadge reason={pane.restore_error} /> : <StatusBadge compact status={online ? rollupStatus(statusPanes.map((candidate) => activity.status(machineId, candidate))) : undefined} />}
           </span>
         </div>
         <div className="workspace-actions">

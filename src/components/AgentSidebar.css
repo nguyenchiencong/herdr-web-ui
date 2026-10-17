@@ -225,6 +225,11 @@
 
 .agent-item.is-offline { opacity: 0.5; }
 
+/* a session asleep in its pane: only its mark is dimmed, so the title keeps its contrast; the moon stands where a status would */
+.agent-item.is-asleep .sidebar-mark { opacity: 0.6; }
+.agent-asleep { margin-left: var(--space-2); color: var(--text-dim); font-size: var(--fs-xs); white-space: nowrap; }
+.agent-asleep-mark { width: 12px; height: 12px; color: var(--text-dim); }
+
 .agent-empty {
   margin: 0;
   padding: var(--space-2) var(--space-2) var(--space-2) var(--side-box);

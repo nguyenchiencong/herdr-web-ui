@@ -1,0 +1,18 @@
+──────────────────────────────────────────────
+
+Thinking Level
+
+Shift+Tab cycles thinking levels in-session
+
+>
+
+    off       No reasoning
+    minimal   Very brief reasoning (~1k toke
+    low       Light reasoning (~2k tokens)
+    medium    Moderate reasoning (~8k tokens
+→ ✓ high      Deep reasoning (~16k tokens)
+    xhigh     Extra-high reasoning (~32k tok
+
+  Enter to select · Ctrl+S to set as default ·
+Escape/Ctrl+C to cancel
+──────────────────────────────────────────────

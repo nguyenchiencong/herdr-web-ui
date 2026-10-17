@@ -42,7 +42,7 @@ import { RenderBoundary } from "./RenderBoundary.tsx";
 import { Composer } from "./Composer.tsx";
 import { ComposerNotices, type ComposerNoticeRow } from "./ComposerNotices.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
-import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, PlanSummary, ServerMessage } from "../../shared/protocol.ts";
+import type { AgentStatus, ClientRole, ConversationMetadata, HibernatedPane, InteractivePrompt, PlanSummary, ServerMessage } from "../../shared/protocol.ts";
 import type { PaneControls, PaneView } from "../lib/actions.ts";
 import { usePaneLane } from "../lib/chatLane.ts";
 import { useSettings, terminalTheme, type Palette, type ResolvedTheme } from "../lib/settings.ts";
@@ -88,6 +88,8 @@ export interface PaneTerminalProps {
   agent?: string | null;
   /** the pane's live agent status: `working` turns composer sends into the queue */
   agentStatus?: AgentStatus;
+  /** a pi session asleep in this pane (herdr names no agent for it, pi or the launcher's label): its chat reads the transcript and its sleep card */
+  hibernated?: HibernatedPane | null;
   /** an OmO pane's running background tasks: the composer's status line offers their list */
   backgroundTasks?: number;
   /** the plan the pane's agent keeps (null on an offline PC): the composer's chip opens it */
@@ -149,6 +151,7 @@ export function PaneTerminal({
   agent = null,
   title = null,
   agentStatus,
+  hibernated = null,
   backgroundTasks = 0,
   plan = null,
   backgroundWait = false,
@@ -2373,7 +2376,7 @@ export function PaneTerminal({
   // a question in Codex's queue leaves the composer alone: Codex keeps working, and a
   // message ("stop, don't touch prod") must reach it, not become the answer; its card answers it
   // a fallback card is answered with its own buttons: what the user types still goes to the agent
-  const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId && !chatPrompt.value.queued && !chatPrompt.value.fallback ? chatPrompt.value : null;
+  const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId && !chatPrompt.value.queued && !chatPrompt.value.fallback && !chatPrompt.value.asleep ? chatPrompt.value : null;
   // ...and while it is open in the terminal it holds the input: nothing is sent into it
   const heldByOpenQueue = chatView && chatPrompt !== null && chatPrompt.pane === paneId && chatPrompt.value.queued === "open";
   const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
@@ -2812,6 +2815,7 @@ export function PaneTerminal({
             ended={ended}
             agent={agent}
             agentStatus={agentStatus}
+            asleep={hibernated !== null}
             onMetadata={onChatMetadata}
             onRead={onChatRead}
             greeted={greeted}
@@ -2924,7 +2928,8 @@ export function PaneTerminal({
           worktreeRepo={worktreeRepo}
           autoFocus={active && !autoSelected && !coarse}
           active={active}
-          agent={agent}
+          // a message to a sleeping session goes to pi, which it wakes: the box names pi, not a shell
+          agent={agent ?? hibernated?.agent ?? null}
           agentStatus={agentStatus}
           backgroundTasks={backgroundTasks}
           plan={plan}

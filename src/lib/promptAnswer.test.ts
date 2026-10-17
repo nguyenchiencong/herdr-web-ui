@@ -30,6 +30,22 @@ describe("answering a prompt from the chat", () => {
     expect(answerHint(prompt(["LM-O"], 1))).toBe("Type 1 or your own reply…");
   });
 
+  it("points pi's session picker at its card: it draws no numbers, and its rows are a window into a longer list", () => {
+    const picker = { ...prompt(["session 9: hello", "session 10: hello"], null), agent: "pi", search: { value: "" }, actions: [{ id: "cancel" as const, label: "Cancel" }], window: { first: 8, total: 23 } };
+    expect(answerHint(picker)).toBe("Choose a session in the card above…");
+    expect(answerRefusal(picker)).toBe("Choose in the card above.");
+    // loading, or a delete asked in the terminal: Cancel alone
+    expect(answerHint({ ...prompt([], null), agent: "pi", actions: [{ id: "cancel" as const, label: "Cancel" }] })).toBe("Answer in the card above…");
+  });
+
+  it("never answers pi's session picker with typed text: a number or a row's name picks no row, and no reply is typed", () => {
+    const picker = { ...prompt(["session 9: hello", "session 10: hello"], null), agent: "pi", search: { value: "" }, actions: [{ id: "cancel" as const, label: "Cancel" }], window: { first: 8, total: 23 } };
+    expect(answerFromText(picker, "1")).toBeNull();
+    expect(answerFromText(picker, "2")).toBeNull();
+    expect(answerFromText(picker, "session 10: hello")).toBeNull();
+    expect(answerFromText(picker, "keep the old one")).toBeNull();
+  });
+
   it("takes only an option for an approval", () => {
     const approval = { ...prompt(["Yes, proceed (y)", "Yes, and don't ask again (p)", "No, and tell Codex what to do differently (esc)"], null), kind: "approval" as const };
     expect(answerFromText(approval, "y")).toEqual({ option_index: 0 });

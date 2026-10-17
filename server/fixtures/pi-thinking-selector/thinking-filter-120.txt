@@ -1,0 +1,14 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Thinking Level
+
+Shift+Tab cycles thinking levels in-session
+
+> hi
+
+→ ✓ high      Deep reasoning (~16k tokens)
+    xhigh     Extra-high reasoning (~32k tokens)
+    low       Light reasoning (~2k tokens)
+
+  Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

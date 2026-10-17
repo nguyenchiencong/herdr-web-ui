@@ -121,6 +121,8 @@ export interface ChatViewProps {
   ended: boolean;
   agent: string | null;
   agentStatus?: AgentStatus;
+  /** a pi session asleep in its pane: no agent, yet its sleep card and transcript are read */
+  asleep?: boolean;
   onMetadata?: (paneId: string, metadata: ConversationMetadata | null) => void;
   /** what the last read says of the conversation, for the composer's greeting; null while nothing is known (loading, a failed read, the chat gone) */
   onRead?: (paneId: string, read: ChatRead | null) => void;
@@ -865,7 +867,7 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, asleep = false, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
@@ -1238,7 +1240,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
 
   // Prompts belong to the visible screen, not the native transcript: a Codex directory-trust
   // menu can appear while idle without any file mutation. Keep their independent 2s poll.
-  const pollPrompt = connected && !ended && agent !== null;
+  const pollPrompt = connected && !ended && (agent !== null || asleep);
   useEffect(() => {
     if (!pollPrompt) { setPrompt(null); setRestored(null); onSuggestionRef.current?.(paneId, null); onRestoredRef.current?.(paneId, null); return; }
     if (!visible) return;

@@ -1,0 +1,22 @@
+
+──────────────────────────────────────────────
+
+◉ Current Folder | ○ All  Name: All  Sort: Thr
+tab scope · re:<pattern> regex · "phrase" exa…
+ctrl+s sort · ctrl+n named · ctrl+d delete · …
+
+>                                             
+
+  session 9: wire the sleep card         21 1w
+  session 10: hello                      23 1w
+  session 11: review the picker          25 1w
+  session 12: fix the composer scroll …  27 1w
+  session 13: wire the sleep card        29 2w
+› session 14: hello                      31 2w
+  session 15: review the picker          33 2w
+  session 16: fix the composer scroll …  35 2w
+  session 17: wire the sleep card        37 2w
+  session 18: hello                      39 2w
+  (15/23)
+
+──────────────────────────────────────────────

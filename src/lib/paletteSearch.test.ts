@@ -87,6 +87,41 @@ describe("rankPanes", () => {
   });
 });
 
+describe("a pi session asleep in its pane", () => {
+  const asleep = pane("sleep", {
+    title: "zz .pi", terminal_title: "zz .pi", terminal_title_stripped: "zz .pi", agent_status: "unknown",
+    hibernated: { agent: "pi", title: "refactor the sleep card", slept_at: "2026-10-17T07:00:00.000Z", next_due_at: null },
+  });
+
+  it("is found by its session's title and by its agent, not by the launcher's zz title", () => {
+    expect(ids(rankPanes("refactor", [asleep], workspaces))).toEqual(["sleep"]);
+    expect(ids(rankPanes("pi", [asleep], workspaces))).toEqual(["sleep"]);
+    expect(rankPanes("zz", [asleep], workspaces)).toEqual([]);
+  });
+
+  it("is found the same when herdr names pi for it", () => {
+    const named = { ...asleep, pane_id: "named", agent: "pi" };
+    expect(ids(rankPanes("refactor", [named], workspaces))).toEqual(["named"]);
+    expect(rankPanes("zz", [named], workspaces)).toEqual([]);
+  });
+
+  it("finds a sleeping session by its title whether herdr lists it as pi, the launcher's label, or none", () => {
+    const named = pane("named-label", { agent: "zz pi", hibernated: { agent: "pi", title: "refactor", slept_at: "2026-10-17T07:00:00.000Z", next_due_at: null } });
+    expect(ids(rankPanes("refactor", [named], workspaces))).toEqual(["named-label"]);
+    expect(ids(rankPanes("pi", [named], workspaces))).toEqual(["named-label"]);
+  });
+
+  it("searches a pane that carries only the launcher's label as no agent", () => {
+    const stale = pane("stale-label", { agent: "zz pi" });
+    expect(rankPanes("zz pi", [stale], workspaces)).toEqual([]);
+    expect(rankPanes("pi", [stale], workspaces)).toEqual([]);
+  });
+
+  it("keeps a pane without the annotation found by its zz title", () => {
+    expect(ids(rankPanes("zz", [pane("launcher", { title: "zz .pi", agent_status: "unknown" })], workspaces))).toEqual(["launcher"]);
+  });
+});
+
 describe("parseQuery", () => {
   it("reads a leading > as actions only and searches the rest", () => {
     expect(parseQuery(">")).toEqual({ actionsOnly: true, text: "" });

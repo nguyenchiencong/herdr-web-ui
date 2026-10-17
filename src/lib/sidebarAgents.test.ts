@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentInfo, HerdrPane, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
-import { activityDots, activityGlyphs, activityWords, agentContext, agentTabName, paneMark, sidebarAgents, workspaceAgentLabels } from "./sidebarAgents.ts";
+import { activityDots, activityGlyphs, activityWords, agentContext, agentTabName, asleepCueShown, paneMark, sidebarAgents, workspaceAgentLabels } from "./sidebarAgents.ts";
 
 function workspace(id: string): WorkspaceInfo {
   return { workspace_id: id, active_tab_id: `${id}:t1`, label: id, number: 1, tab_count: 1, pane_count: 1, focused: false, agent_status: "idle" };
@@ -23,6 +23,66 @@ function snapshot(panes: HerdrPane[], agents: AgentInfo[] = []): SessionSnapshot
 }
 
 describe("sidebarAgents", () => {
+  const asleep = { agent: "pi" as const, title: "refactor", slept_at: "2026-10-17T07:00:00.000Z", next_due_at: null };
+
+  it("lists a pi session asleep in its pane, which herdr names no agent for, as a pi row", () => {
+    const sleeping = pane("sleep", { title: "zz .pi", agent_status: "unknown", hibernated: asleep });
+    const rows = sidebarAgents(snapshot([pane("shell"), sleeping]));
+    expect(rows.map((row) => row.pane.pane_id)).toEqual(["sleep"]);
+    expect(rows[0]).toMatchObject({ canonicalAgent: "pi", agentLabel: "pi", hibernated: asleep });
+    expect(paneMark(rows[0])).toBe("pi");
+  });
+
+  it("keeps a sleeping session in the order of its workspace, among the agents beside it", () => {
+    const rows = sidebarAgents(snapshot([
+      pane("first", { agent: "claude", agent_status: "idle" }),
+      pane("asleep", { title: "zz .pi", agent_status: "unknown", hibernated: asleep }),
+      pane("last", { agent: "codex", agent_status: "working" }),
+    ]));
+    expect(rows.map((row) => row.pane.pane_id)).toEqual(["first", "asleep", "last"]);
+  });
+
+  it("does not list a pane with the launcher's title and no sleep annotation", () => {
+    const rows = sidebarAgents(snapshot([pane("stale", { title: "zz .pi", agent_status: "unknown" })]));
+    expect(rows).toEqual([]);
+  });
+
+  it("marks a sleeping row with its session's title, not the launcher's", () => {
+    const rows = sidebarAgents(snapshot([pane("asleep", { title: "zz .pi", hibernated: asleep })]));
+    expect(rows[0]?.hibernated?.title).toBe("refactor");
+    expect(rows[0]?.pane.title).toBe("zz .pi");
+  });
+
+  it("lists a sleeping session herdr names pi for as one row, with its annotation and no second pi row", () => {
+    const sleeping = pane("sleep", { agent: "pi", title: "zz .pi", agent_status: "idle", hibernated: asleep });
+    const rows = sidebarAgents(snapshot([sleeping], [agent(sleeping, { agent: "pi", agent_status: "idle" })]));
+    expect(rows.map((row) => row.pane.pane_id)).toEqual(["sleep"]);
+    expect(rows[0]).toMatchObject({ canonicalAgent: "pi", hibernated: asleep });
+    expect(rows[0]!.agent).not.toBeNull();
+  });
+
+  it("shows the Asleep cue only on a connected PC, and keeps the session's title either way", () => {
+    expect(asleepCueShown(asleep, true)).toBe(true);
+    expect(asleepCueShown(asleep, false)).toBe(false);
+    expect(asleepCueShown(null, true)).toBe(false);
+    expect(asleepCueShown(undefined, true)).toBe(false);
+    const rows = sidebarAgents(snapshot([pane("sleep", { agent: "pi", title: "zz .pi", hibernated: asleep })]));
+    expect(rows[0]?.hibernated?.title).toBe("refactor");
+  });
+
+  it("lists a sleeping session the launcher's label names as one pi row, with the label named nowhere", () => {
+    const sleeping = pane("sleep", { agent: "zz pi", title: "zz .pi", agent_status: "idle", display_agent: "zz pi", hibernated: asleep });
+    const rows = sidebarAgents(snapshot([sleeping], [agent(sleeping, { agent: "zz pi", agent_status: "idle", display_agent: "zz pi" })]));
+    expect(rows.map((row) => row.pane.pane_id)).toEqual(["sleep"]);
+    expect(rows[0]).toMatchObject({ canonicalAgent: "pi", agent: null, agentLabel: "pi", hibernated: asleep });
+    expect(paneMark(rows[0])).toBe("pi");
+  });
+
+  it("keeps a pane that carries only the launcher's label out of the Agents list: it is a plain terminal", () => {
+    const stale = pane("stale", { agent: "zz pi", title: "zz .pi", agent_status: "idle" });
+    expect(sidebarAgents(snapshot([stale], [agent(stale, { agent: "zz pi", agent_status: "idle" })]))).toEqual([]);
+  });
+
   it("uses the API roster and excludes ordinary shells regardless of their status", () => {
     const named = pane("named");
     const rows = sidebarAgents(snapshot([

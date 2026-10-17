@@ -1,12 +1,15 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import type { HerdrPane, InteractivePrompt, PromptAnswer } from "../shared/protocol.ts";
+import type { HerdrPane, InteractivePrompt, InteractivePromptAction, InteractivePromptActionId, PromptAnswer } from "../shared/protocol.ts";
 import { codexTranscriptPath, paneCodexHome, unansweredCodexQuestions, type QueuedQuestion } from "./codex.ts";
 import { HerdrError, paneRead, paneScrollInfo, paneSendKeys, paneSendText, sessionSnapshot } from "./herdr/client.ts";
 import { omoTranscriptForPane } from "./omo.ts";
 import { OmoAskReader, omoAsksAfter, type OmoAskCall, type OmoAsks } from "./omo-ask.ts";
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
 import { claudePlanFile } from "./claude-plan.ts";
+import { piAgentDir } from "./pi-models.ts";
+import { hasSleepTitle, readSleepRecords, sleepBannerAtEnd, sleepingRecordOf, type SleepRecord } from "./pi-sleep.ts";
+import { isSleepAgentLabel } from "../shared/sleep-agent.ts";
 
 const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const SELECTED_RE = /^[❯›>]\s*/;
@@ -93,6 +96,9 @@ const KEY = {
   // (herdr's own alt+arrow bindings apply to the keyboard, not to keys sent to the pane)
   openQueue: "alt+up",
   closeQueue: "alt+down",
+  // the search line of pi's session picker: its editor keys clear the text, to the cursor's end and then to its start
+  clearToEnd: "ctrl+k",
+  clearToStart: "ctrl+u",
 } as const;
 
 type Responder =
@@ -120,6 +126,9 @@ type Responder =
   | "pi-confirm"
   | "pi-input"
   | "pi-model"
+  | "pi-thinking"
+  | "pi-sleep"
+  | "pi-session"
   | "hermes-question"
   | "hermes-input"
   | "fallback-menu"
@@ -143,10 +152,22 @@ type ParsedPrompt = InteractivePrompt & {
   multiSteps?: (choices: number[]) => AnswerStep[];
   /** the key the menu itself names for the row under the cursor now, for a card whose rows do not all take the same one */
   rowKey?: AnswerStep | null;
+  /** pi's session picker: the non-blank lines below its closing rule, which only pi's footer may take (promptTailIsActive) */
+  pickerTail?: number;
+  /** a sleeping session's card: the record it was read from, which Resume and Quit act on (answerSleepingPi, server/index.ts) */
+  sleepRecord?: SleepRecord;
 };
 
 /** `pick`: the menu's own key for the row the moves end on, read off the screen once the cursor is there (`rowKey`) */
-type AnswerStep = { keys?: string[]; text?: string; pick?: true };
+type AnswerStep = {
+  keys?: string[];
+  text?: string;
+  pick?: true;
+  /** a key that changes what the picker shows, not the answer: nothing is committed by it */
+  view?: true;
+  /** the picker's cursor in the whole list once these keys have moved it there (paging is checked by it) */
+  landing?: number;
+};
 type MenuRow = { label: string; selected: boolean; checked: boolean; description?: string; lineIndex: number };
 type NumberedRow = MenuRow & { number: number };
 
@@ -304,6 +325,10 @@ function publicPrompt(parsed: ParsedPrompt): InteractivePrompt {
     ...(parsed.queued ? { queued: parsed.queued } : {}),
     ...(parsed.steps ? { steps: parsed.steps } : {}),
     ...(parsed.fallback ? { fallback: true as const } : {}),
+    ...(parsed.asleep ? { asleep: true as const } : {}),
+    ...(parsed.search ? { search: parsed.search } : {}),
+    ...(parsed.actions ? { actions: parsed.actions } : {}),
+    ...(parsed.window ? { window: parsed.window } : {}),
   };
   parsedByPublicPrompt.set(prompt, parsed);
   return prompt;
@@ -1965,7 +1990,10 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   // pi keeps its footer under every dialog — the pane's folder, then its context meter — so the
   // hint sits near the end without being it. A dialog already answered leaves its hint far
   // above whatever came after, which is what keeps this window narrow.
+  // a picker's rows end where its closing rule is: the footer may follow it, and nothing else may (parsePiSessionPicker)
+  if (prompt.responder === "pi-session") return (prompt.pickerTail ?? Number.POSITIVE_INFINITY) <= PI_FOOTER_LINES;
   if (prompt.responder === "pi-model") return hintAtEnd(shown, PI_MODEL_HINT_AT_END_RE, PI_FOOTER_LINES);
+  if (prompt.responder === "pi-thinking") return hintAtEnd(shown, PI_THINKING_HINT_AT_END_RE, PI_FOOTER_LINES);
   if (prompt.responder === "pi-question" || prompt.responder === "pi-confirm" || prompt.responder === "pi-input") {
     return hintAtEnd(shown, PI_MENU_HINT_AT_END_RE, PI_FOOTER_LINES, 4)
       || hintAtEnd(shown, PI_INPUT_HINT_AT_END_RE, PI_FOOTER_LINES, 4);
@@ -2034,8 +2062,8 @@ function hintAtEnd(shown: string[], atEnd: RegExp, footerLines: number, span = 3
   }
   return false;
 }
-/** `/model` types a filter into this line, then lists what is left under it */
-const PI_MODEL_FILTER_RE = /^[\u203a>\u276f]\s*$/;
+/** `/model` types a filter into this line, then lists what is left under it: the text after the `>` is the filter */
+const PI_MODEL_FILTER_RE = /^[\u203a>\u276f](?:\s.*)?$/;
 /** pi ticks the model answering now, and marks the one it starts on with `· default` */
 const PI_MODEL_CURRENT_RE = /[\u2713\u2714]/;
 const PI_MODEL_DEFAULT_RE = /\s*\u00b7\s*default$/;
@@ -2090,6 +2118,8 @@ function piDialogRows(lines: string[], hintIndex: number): { rows: { line: strin
 const PI_MODEL_PROVIDER_RE = /\[[^\]]+\]/;
 /** the tail of a model's name a narrow pane wrapped onto its own line: only the provider's bracket */
 const PI_MODEL_TAIL_RE = /^\[[^\]]+\](\s*\u00b7\s*default)?$/;
+/** the `· default` marker a narrow pane wrapped onto its own line, after the dot that ends the line above it */
+const PI_MODEL_DEFAULT_TAIL_RE = /^default$/;
 
 /**
  * The catalogue `/model` lists under its filter line: every row names its provider in brackets,
@@ -2117,6 +2147,11 @@ function piModelRows(lines: string[], startIndex: number): { label: string; curs
     const previous = block.at(-1);
     if (previous !== undefined && cleanLine(previous) && !PI_MODEL_PROVIDER_RE.test(cleanLine(previous))
       && /^ {0,1}\S/.test(raw) && PI_MODEL_TAIL_RE.test(line)) {
+      block[block.length - 1] = `${previous} ${line}`;
+      continue;
+    }
+    // the `· default` marker of the row pi keeps as its default wraps the same way at 36 columns, after the bracket's dot
+    if (previous !== undefined && cleanLine(previous).endsWith("\u00b7") && /^ {0,1}\S/.test(raw) && PI_MODEL_DEFAULT_TAIL_RE.test(line)) {
       block[block.length - 1] = `${previous} ${line}`;
       continue;
     }
@@ -2178,6 +2213,57 @@ function parsePiModel(screen: string): ParsedPrompt | null {
   });
 }
 
+/**
+ * pi's thinking-level selector (ThinkingSelectorComponent, pi 1.3.0; server/fixtures/pi-thinking-selector): the title
+ * `Thinking Level`, a shortcut line, a search line, then the levels as a list: the cursor's `→`, the current level's
+ * `✓`, and a description after two spaces, which a narrow pane drops. A hint closes it, wrapped on a narrow pane.
+ * Enter picks the level for this session. The hint's other key saves the level as the default; the card never offers it.
+ */
+const PI_THINKING_TITLE = "Thinking Level";
+const PI_THINKING_HINT_RE = /\bto select\s*·\s*.+?\bto set as default\s*·\s*.+?\bto cancel\b/i;
+const PI_THINKING_HINT_AT_END_RE = new RegExp(`${PI_THINKING_HINT_RE.source}$`, "i");
+/** the levels pi 1.3.0 draws (LEVEL_DESCRIPTIONS); a level pi adds is refused until it is named here */
+const PI_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+/** the title sits at most this many lines above the first level (a wrapped shortcut line takes one more) */
+const PI_THINKING_TITLE_LINES = 8;
+
+function parsePiThinking(screen: string): ParsedPrompt | null {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
+  const hintIndex = findLastIndex(lines, (_, index) => PI_THINKING_HINT_RE.test(wrapped(lines, index)));
+  // the levels end at the one blank line the hint follows
+  if (hintIndex < 2 || cleanLine(lines[hintIndex - 1]!) !== "") return null;
+  const end = hintIndex - 2;
+  if (!cleanLine(lines[end]!) || isDivider(lines[end]!)) return null;
+  let start = end;
+  while (start > 0 && cleanLine(lines[start - 1]!) !== "" && !isDivider(lines[start - 1]!)) start -= 1;
+  // the title is drawn above the levels, within the same dialog
+  const title = findLastIndex(lines.slice(0, start), (line) => cleanLine(line) === PI_THINKING_TITLE);
+  if (title < 0 || start - title > PI_THINKING_TITLE_LINES) return null;
+  const rows: { label: string; cursor: boolean; current: boolean }[] = [];
+  for (let index = start; index <= end; index += 1) {
+    const line = cleanLine(lines[index]!);
+    // every line of the list is a level: a name, then at most its description
+    const label = line.match(PI_ROW_RE)?.[2]?.split(/\s{2,}/)[0];
+    if (label === undefined || !PI_THINKING_LEVELS.has(label)) return null;
+    rows.push({ label, cursor: /^[\u2192\u276f\u279c]/.test(line), current: /[\u2713\u2714]/.test(line) });
+  }
+  const labels = rows.map((row) => row.label);
+  if (rows.length < 2 || rows.filter((row) => row.cursor).length !== 1 || new Set(labels).size !== labels.length) return null;
+  const current = rows.find((row) => row.current);
+  return finishPrompt("pi", {
+    kind: "question",
+    title: "",
+    question: current ? `Select thinking level (currently ${current.label})` : "Select thinking level",
+    body: null,
+    options: labels.map((label) => ({ label, description: null })),
+    multi_select: false,
+    custom_option_index: null,
+  }, {
+    responder: "pi-thinking", menuLabels: labels, selectedIndex: rows.findIndex((row) => row.cursor), checkedOptionIndices: [], customMenuIndex: null,
+    rejectWithEscapeIndex: null,
+  });
+}
+
 function parsePiDialog(screen: string, moved = false): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const hintIndex = findLastIndex(lines, (_, index) => PI_MENU_HINT_RE.test(wrapped(lines, index)) || PI_INPUT_HINT_RE.test(wrapped(lines, index)));
@@ -2226,6 +2312,212 @@ function parsePiDialog(screen: string, moved = false): ParsedPrompt | null {
     // what a confirmation means, where Escape would leave it unanswered
     rejectWithEscapeIndex: null,
   });
+}
+
+/**
+ * A pi session the sleep launcher holds in this pane (pi-launcher-hibernate.mjs). Resume and Quit are answered by the
+ * server's sleep path (answerSleepingPi), which sends the Enter that resumes the session or the lone q that quits it, each after
+ * a fresh read of the record and the banner; optionSteps are the keys that answer names, for the answer's own check. The card is read from the
+ * sleep record, not the screen: herdr names no agent, pi or the launcher's label for a sleeping pane, so the screen has no pi
+ * dialog to read. The record's time of sleep is part of the id, so each sleep is asked afresh.
+ */
+function parsePiSleep(record: SleepRecord): ParsedPrompt {
+  return finishPrompt("pi", {
+    kind: "question",
+    title: "Session asleep",
+    question: `${record.title} is asleep in this pane. Resume it to continue, or quit it.`,
+    body: null,
+    options: [
+      { label: "Resume", description: "Wakes the session in this pane" },
+      { label: "Quit", description: "Ends the session and leaves the pane" },
+    ],
+    multi_select: false,
+    custom_option_index: null,
+    asleep: true,
+  }, {
+    responder: "pi-sleep", menuLabels: ["Resume", "Quit"], selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: null,
+    rejectWithEscapeIndex: null,
+    optionSteps: [[{ keys: [KEY.enter] }], [{ text: "q" }]],
+    sleepRecord: record,
+  }, { call: `${record.sessionId}\u0000${record.sleptAt}` });
+}
+
+/**
+ * pi's `/resume` picker (SessionSelectorComponent, pi 1.3.0): the sessions to switch to. Its screen is
+ * fixed, and this reads that layout and nothing else, from the top: a rule, a blank line, the scope line
+ * (the title is cut away on a narrow pane; the scope is not), two hint lines (the second is blank while a
+ * delete is asked or a status shows), a blank line, the search line `> text`, a blank line, the rows (ten
+ * at most, the cursor's marked `› `), a `(n/N)` counter when there are more than ten, a blank line and a
+ * closing rule, then pi's footer. Anything else is no picker. Only the rows are offered: pi's own keys for
+ * delete, rename and sort are never sent, and a delete asked in the terminal offers Cancel alone.
+ */
+const PI_PICKER_PAGE = 10;
+const PI_PICKER_SEARCH_MAX = 200;
+const PI_PICKER_RULE_RE = /^─{3,}$/;
+const PI_PICKER_SEARCH_RE = /^>(?: (.*))?$/;
+const PI_PICKER_ROW_RE = /^(› | {2})(.*)$/;
+/** the count a row ends with, before its age; the age is left off the card, which would change with the clock */
+const PI_PICKER_COUNT_RE = /(\d+) (?:now|\d+(?:mo|m|h|d|w|y))$/;
+const PI_PICKER_COUNTER_RE = /^ {2}\((\d+)\/(\d+)\)$/;
+const PI_PICKER_EMPTY_RE = /^ {2}No (?:named )?sessions\b/;
+/** a tree row's leading branch: the `│  ` or `   ` of each ancestor, then `├─ ` or `└─ ` */
+const PI_PICKER_BRANCH_RE = /^((?:│ {2}| {3})*)(?:([├└])─ )?/;
+/** in All a row's folder follows its label, from the last space before a path that runs to the row's count */
+const PI_PICKER_FOLDER_RE = /^(.*)\s+((?:[A-Za-z]:[\\/]|~[\\/]|\/)\S.*)$/;
+
+interface PickerRow {
+  cursor: boolean;
+  label: string;
+  /** the row without its count and age: what the cursor's row must still say for a tap to be aimed */
+  identity: string;
+  description: string;
+}
+
+/** One row: the cursor's mark, the tree branch, the label, the folder (in All) and the count. */
+function pickerRow(line: string, scope: "current" | "all"): PickerRow | null {
+  const row = PI_PICKER_ROW_RE.exec(line);
+  if (row === null) return null;
+  const body = row[2]!.trimEnd();
+  const count = PI_PICKER_COUNT_RE.exec(body);
+  if (count === null) return null;
+  const left = body.slice(0, count.index).trimEnd();
+  let label = left.slice(PI_PICKER_BRANCH_RE.exec(left)![0].length);
+  let folder: string | null = null;
+  if (scope === "all") {
+    const split = PI_PICKER_FOLDER_RE.exec(label);
+    if (split !== null) {
+      label = split[1]!.trimEnd();
+      folder = split[2]!;
+    }
+  }
+  if (label === "") return null;
+  const messages = count[1] === "1" ? "1 message" : `${count[1]} messages`;
+  return { cursor: row[1] === "› ", label, identity: left, description: folder === null ? messages : `${folder} · ${messages}` };
+}
+
+/** pi's scope line: the marked scope, or Loading while a list is still being read (its marker then reads Current Folder, whatever the scope). */
+function piPickerScope(line: string): "current" | "all" | "loading" | null {
+  if (/◉ Current Folder \| ○ All\b/.test(line)) return "current";
+  if (/○ Current Folder \| ◉ All\b/.test(line)) return "all";
+  if (/○ Current Folder \| Loading\b/.test(line)) return "loading";
+  return null;
+}
+
+/** The picker whose search line is `lines[search]`, or null: the layout around that line is checked, not the line alone. */
+function pickerAt(lines: string[], search: number, value: string): ParsedPrompt | null {
+  // above the search line: the rule, a blank, the scope line, two hint lines, a blank
+  const top = search - 6;
+  if (top < 0 || !PI_PICKER_RULE_RE.test(lines[top]!) || lines[top + 1] !== "" || lines[search - 1] !== "") return null;
+  const scope = piPickerScope(lines[top + 2]!);
+  if (scope === null) return null;
+  const confirming = /^Delete session\?/.test(lines[top + 3]!);
+  // below it: a blank, the content, a blank, and the closing rule
+  if (lines[search + 1] !== "") return null;
+  let bottom = search + 2;
+  while (bottom < lines.length && !PI_PICKER_RULE_RE.test(lines[bottom]!)) bottom += 1;
+  if (bottom >= lines.length || lines[bottom - 1] !== "" || bottom - 1 <= search + 1) return null;
+  const content = lines.slice(search + 2, bottom - 1);
+  // only pi's footer may follow the rule: a picker answered and left in scrollback has output below it
+  const tail = lines.slice(bottom + 1).filter((line) => line !== "").length;
+  const counter = PI_PICKER_COUNTER_RE.exec(content.at(-1) ?? "");
+  const rowLines = counter === null ? content : content.slice(0, -1);
+  const emptyList = counter === null && rowLines.length === 1 && PI_PICKER_EMPTY_RE.test(rowLines[0]!);
+  let rows: PickerRow[] = [];
+  let first = 0;
+  let total = 0;
+  let selected = 0;
+  // a list still loading is not read: its rows are partial, and nothing in it is offered
+  if (scope !== "loading" && !emptyList) {
+    const read = rowLines.map((line) => pickerRow(line, scope));
+    if (read.some((row) => row === null)) return null;
+    rows = read as PickerRow[];
+    const cursors = rows.flatMap((row, index) => (row.cursor ? [index] : []));
+    if (rows.length === 0 || cursors.length !== 1) return null;
+    selected = cursors[0]!;
+    if (counter === null) {
+      // without a counter the list is whole: pi draws one only for a list longer than a page
+      if (rows.length > PI_PICKER_PAGE) return null;
+      total = rows.length;
+    } else {
+      const at = Number(counter[1]) - 1;
+      total = Number(counter[2]);
+      if (total <= PI_PICKER_PAGE || at < 0 || at >= total) return null;
+      // the window follows the cursor: its start is five rows above it, held inside the list
+      first = Math.max(0, Math.min(at - 5, total - PI_PICKER_PAGE));
+      if (rows.length !== Math.min(PI_PICKER_PAGE, total - first) || at - first !== selected) return null;
+    }
+  }
+  const normal = scope !== "loading" && !confirming && rows.length > 0;
+  const offered = normal ? rows : [];
+  const searchField = scope === "loading" || confirming ? undefined : { value };
+  // Cancel is always there; scope and paging only in a list that can be changed. A delete asked in the terminal
+  // offers Cancel alone (Esc keeps every session), and a list still loading offers nothing else.
+  const actions: InteractivePromptAction[] = [];
+  if (scope !== "loading" && !confirming) {
+    actions.push(scope === "current" ? { id: "scope", label: "All", to: "all" } : { id: "scope", label: "Current folder", to: "current" });
+    if (first > 0) actions.push({ id: "earlier", label: "Earlier" });
+    if (first + rows.length < total) actions.push({ id: "later", label: "Later" });
+  }
+  actions.push({ id: "cancel", label: "Cancel" });
+  const question = scope === "loading" ? "Loading sessions"
+    : confirming ? "Delete this session? Cancel keeps every session."
+    : rows.length === 0 ? (scope === "current" ? "No sessions in this folder" : "No sessions")
+    : scope === "current" ? "Resume a session in this folder" : "Resume a session from any folder";
+  return finishPrompt("pi", {
+    kind: "question",
+    title: "",
+    question,
+    body: null,
+    options: offered.map((row) => ({ label: row.label, description: row.description })),
+    multi_select: false,
+    custom_option_index: null,
+    ...(searchField === undefined ? {} : { search: searchField }),
+    actions,
+    ...(normal ? { window: { first, total } } : {}),
+  }, {
+    responder: "pi-session",
+    menuLabels: offered.map((row) => row.identity),
+    selectedIndex: offered.length > 0 ? selected : 0,
+    checkedOptionIndices: [],
+    customMenuIndex: null,
+    rejectWithEscapeIndex: null,
+    pickerTail: tail,
+  });
+}
+
+/**
+ * The picker's search line is the anchor: the last one on the screen whose layout is pi's picker decides,
+ * and promptTailIsActive decides whether that picker is still the one on the screen.
+ */
+function parsePiSessionPicker(screen: string): ParsedPrompt | null {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trimEnd());
+  for (let search = lines.length - 1; search >= 0; search -= 1) {
+    const found = PI_PICKER_SEARCH_RE.exec(lines[search]!);
+    if (found === null) continue;
+    const picker = pickerAt(lines, search, found[1] ?? "");
+    if (picker !== null) return picker;
+  }
+  return null;
+}
+
+/** The cursor's row in the whole list: a picker shows a page of rows from `window.first`. */
+function pickerCursor(prompt: ParsedPrompt): number {
+  return (prompt.window?.first ?? 0) + prompt.selectedIndex;
+}
+
+/**
+ * A picker's control. Cancel is Escape and scope is Tab. Paging is repeated arrows, because herdr's send_keys
+ * takes no page keys: the arrows move the cursor a page as pi's own page keys do, and the landing is checked.
+ */
+function pickerControlSteps(id: InteractivePromptActionId, parsed: ParsedPrompt): AnswerStep[] {
+  if (id === "cancel") return keySteps([KEY.escape]);
+  if (id === "scope") return [{ keys: [KEY.tab], view: true }];
+  const at = pickerCursor(parsed);
+  const total = parsed.window?.total ?? 0;
+  const to = id === "earlier" ? Math.max(0, at - PI_PICKER_PAGE) : Math.min(total - 1, at + PI_PICKER_PAGE);
+  const keys = navigationKeys(to - at);
+  if (keys.length === 0) throw new InvalidAnswer("The picker has no page that way.");
+  return [{ keys, view: true, landing: to }];
 }
 
 /**
@@ -2338,7 +2630,7 @@ function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null
       : agent === "claude"
         ? [parseClaudeQuestion(screen), parseClaudeSubmit(screen), parseClaudeApproval(screen), parseClaudeConfirm(screen), parseClaudeModel(screen), parseClaudeEffort(screen), parseClaudeHeld(screen, sent, working), ...omo()]
         : agent === "pi"
-          ? [parsePiModel(screen), parsePiDialog(screen), ...omo()]
+          ? [parsePiSessionPicker(screen), parsePiModel(screen), parsePiThinking(screen), parsePiDialog(screen), ...omo()]
         : agent === "hermes"
           ? [parseHermesClarify(screen)]
         : agent === "omo" || agent === ""
@@ -2393,12 +2685,30 @@ function keySteps(keys: string[]): AnswerStep[] {
   return keys.map((key) => ({ keys: [key] }));
 }
 
-export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer, "option_index" | "option_indices" | "custom_text">): AnswerStep[] {
+export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer, "option_index" | "option_indices" | "custom_text" | "action" | "search_text">): AnswerStep[] {
   const parsed = parsedByPublicPrompt.get(prompt);
   if (!parsed) throw new InvalidAnswer("The prompt was not produced by parseInteractivePrompt.");
-  const supplied = [answer.option_index !== undefined, answer.option_indices !== undefined, answer.custom_text !== undefined].filter(Boolean).length;
+  const supplied = [answer.option_index !== undefined, answer.option_indices !== undefined, answer.custom_text !== undefined, answer.action !== undefined, answer.search_text !== undefined].filter(Boolean).length;
   if (supplied !== 1) throw new InvalidAnswer("Exactly one answer is required.");
 
+  if (answer.action !== undefined) {
+    const control = parsed.actions?.find((entry) => entry.id === answer.action);
+    if (!control) throw new InvalidAnswer("This control is not on the card.");
+    return pickerControlSteps(control.id, parsed);
+  }
+  if (answer.search_text !== undefined) {
+    if (typeof answer.search_text !== "string") throw new InvalidAnswer("Search text must be a string.");
+    if (parsed.search === undefined) throw new InvalidAnswer("This prompt has no search.");
+    const value = answer.search_text;
+    if (value.length > PI_PICKER_SEARCH_MAX || /[\u0000-\u001f\u007f]/.test(value)) {
+      throw new InvalidAnswer(`The search text must be one line of at most ${PI_PICKER_SEARCH_MAX} characters.`);
+    }
+    // the search line's own keys clear the text, to its end and then to its start; the text follows with no Enter:
+    // pi filters the list as it arrives, and nothing is picked
+    const steps: AnswerStep[] = [{ keys: [KEY.clearToEnd, KEY.clearToStart], view: true }];
+    if (value !== "") steps.push({ text: value, view: true });
+    return steps;
+  }
   if (answer.custom_text !== undefined) {
     if (typeof answer.custom_text !== "string") throw new InvalidAnswer("Custom text must be a string.");
     const text = answer.custom_text.trim();
@@ -3132,11 +3442,21 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
   for (const known of chatSent.keys()) if (!panes.some((candidate) => candidate.pane_id === known)) chatSent.delete(known);
   const pane = panes.find((candidate) => candidate.pane_id === paneId);
   if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
-  const agent = pane.agent ?? "";
+  // the launcher's label is no agent: a pane that carries it without a sleeping session is read as a plain terminal
+  const agent = isSleepAgentLabel(pane.agent) ? "" : pane.agent ?? "";
   const status = pane.agent_status;
   // counted right before the screen is read, after the snapshot: what matters is whether an
   // answer ran while the screen was being read
   const turns = answerTurns.get(paneId) ?? 0;
+  // a pi session asleep in its pane: herdr names no agent for it, pi (when the launcher runs as pi) or the launcher's label, so the launcher's sleep record is the evidence
+  const sleeping = hasSleepTitle(pane) ? sleepingRecordOf(pane, readSleepRecords(piAgentDir())) : null;
+  if (sleeping !== null) {
+    // the card is offered only while the launcher's banner is the pane's last line: rows below it are no prompt of the sleep,
+    // and no other prompt is read from a sleeping pane, since its keys would reach the launcher
+    const screen = (await paneRead({ paneId, source: "detection", format: "text" })).text;
+    const card = sleepBannerAtEnd(screen) ? publicPrompt(parsePiSleep(sleeping)) : null;
+    return { agent: "pi", status, prompt: asked(paneId, card, turns), pane, panes };
+  }
   const known = await readKnownPrompt(paneId, pane, agent, codexHome, panes);
   // an omo form just answered has closed, while herdr still reports the wait for a moment: that
   // is no screen to answer, and its fallback card would flash up after the form's last answer
@@ -3329,6 +3649,8 @@ export interface PromptRequestOptions {
   claudeTranscript?: (paneId: string) => string | null;
   /** the requester can only watch: it gets the screen's card, never the plan file's text or path */
   readOnly?: boolean;
+  /** answers a sleeping session's card: Resume begins its wake, Quit sends the lone q (answerSleepingPi, server/index.ts) */
+  sleepAnswer?: (paneId: string, record: SleepRecord, action: "resume" | "quit") => Promise<void>;
 }
 
 /**
@@ -3464,15 +3786,30 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         if (target !== prompt) steps = answerKeys(target, body);
         const parsed = parsedByPublicPrompt.get(target)!;
         const responder = parsed.responder;
+        // a sleeping session is answered by the server's sleep path alone (sleepAnswer, answerSleepingPi): Resume begins the
+        // wake with its Enter, Quit sends the lone q, and each reads the record and the banner fresh before it sends
+        if (responder === "pi-sleep") {
+          if (!asks() || options.sleepAnswer === undefined || parsed.sleepRecord === undefined) return promptChanged();
+          try {
+            await options.sleepAnswer(body.pane_id, parsed.sleepRecord, body.option_index === 0 ? "resume" : "quit");
+          } catch (error) {
+            if (error instanceof HerdrError && (error.code === "sleep_changed" || error.code === "agent_waking")) return promptChanged();
+            throw error;
+          }
+          committed = true;
+          answered = true;
+          return jsonResponse({ ok: true });
+        }
         // where the moves sent so far leave the cursor (↑ stops at the first row: omoWalk)
         let cursor = parsed.selectedIndex;
-        // Claude's unnumbered rows and pi's models are read with no number to aim at: looked at
+        // Claude's unnumbered rows, pi's models and pi's thinking levels are read with no number to aim at: looked at
         // again before the Enter even when it needs no move. So is Claude's model list, picked
         // with a letter: typed after the list has gone, it would stand in the agent's own prompt
-        let moved = responder === "claude-confirm" || responder === "pi-model" || responder === "omo-question" || responder === "claude-model" || responder === "claude-effort" || responder === "codex-model" || responder === "fallback-gjc-menu";
+        let moved = responder === "claude-confirm" || responder === "pi-model" || responder === "pi-thinking" || responder === "pi-session" || responder === "omo-question" || responder === "claude-model" || responder === "claude-effort" || responder === "codex-model" || responder === "fallback-gjc-menu";
         // Claude's and Codex's model lists: a window on a list, picked with a letter; Claude's effort
-        // slider the same way, its levels side by side
-        const list = responder === "claude-model" || responder === "claude-effort" || responder === "codex-model";
+        // slider the same way, its levels side by side. pi's thinking levels are a list too: each move is
+        // checked against the row it lands on
+        const list = responder === "claude-model" || responder === "claude-effort" || responder === "codex-model" || responder === "pi-thinking";
         // ←/→ move the slider; anywhere else they are a menu's own keys (Claude's question tabs)
         const sideways = responder === "claude-effort";
         /** the menu as the last look before a key showed it */
@@ -3484,6 +3821,8 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
           // rows on screen, and with them the card's id, change on the way down: what must
           // hold is the model under the cursor, by name. A wrong model, unlike a wrong menu
           // entry, answers every later turn silently
+          // the picker's row under the cursor: by its place in the whole list, and by its text
+          if (responder === "pi-session") return shown?.responder === "pi-session" && pickerCursor(shown) === (parsed.window?.first ?? 0) + cursor && shown.menuLabels[shown.selectedIndex] === parsed.menuLabels[cursor];
           if (responder === "pi-model") return shown?.responder === "pi-model" && shown.options[shown.selectedIndex]?.label === parsed.options[cursor]?.label;
           // Claude's list is a window too, drawn with fewer rows in a pane made shorter meanwhile:
           // the model under the cursor, by its number in the list, its name and what the row says
@@ -3520,19 +3859,39 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
             await Bun.sleep(50);
           }
         };
+        /** Waits until the picker's cursor shows at `cursorAt` in the whole list: paging moves it by keys, with no row to check. */
+        const pickerLanded = async (cursorAt: number): Promise<boolean> => {
+          const deadline = Date.now() + SETTLE_MS;
+          for (;;) {
+            if (!asks() || request.signal.aborted) return false;
+            const left = deadline - Date.now();
+            if (left <= 0) return false;
+            const reading = readKnownPrompt(body.pane_id, pane, agent, options.codexHome, panes);
+            reading.catch(() => undefined);
+            const read = await Promise.race([reading, Bun.sleep(left).then(() => null)]);
+            if (!read || Date.now() > deadline) return false;
+            const shown = read.prompt ? parsedByPublicPrompt.get(read.prompt) ?? null : null;
+            if (shown?.responder === "pi-session" && pickerCursor(shown) === cursorAt) return true;
+            await Bun.sleep(50);
+          }
+        };
         // whether a move of this answer has gone out
         let walked = false;
+        // whether a view step of this answer has gone out: the list moves under the next one, so it is checked once
+        let viewed = false;
         for (let index = 0; index < steps.length; index += 1) {
           const step = steps[index]!;
-          const move = step.keys?.every((key) => key === KEY.up || key === KEY.down || (sideways && (key === KEY.left || key === KEY.right))) ?? false;
+          // a view step (paging, scope, search) moves the picker's list, not the answer, so it is never a move of a row
+          const view = step.view === true;
+          const move = !view && (step.keys?.every((key) => key === KEY.up || key === KEY.down || (sideways && (key === KEY.left || key === KEY.right))) ?? false);
           // the asking ended under the answer: no further key, whatever the screen shows
           if (!asks()) return promptChanged();
           // A model list can be nine rows from the cursor, and an Esc in the terminal hands its
           // keys to the agent's own prompt, where an arrow walks the prompt's history: each move
           // after the first goes only once the list shows the one before it
           // GJC's selector the same: dismissed under the answer, its composer would take the moves
-          if (move && walked && (list || responder === "fallback-gjc-menu") && !(await onRow())) return promptChanged();
-          if (!move && !committed) {
+          if (move && walked && (list || responder === "pi-session" || responder === "fallback-gjc-menu") && !(await onRow())) return promptChanged();
+          if (!move && !committed && !viewed) {
             // An answer is only as good as the menu and the cursor it moves from, and both are
             // as old as the read above by the time its moves are done: the menu answered in the
             // terminal, with another one in its place, would take the Enter meant for this one,
@@ -3552,7 +3911,8 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
           const key: AnswerStep | null = step.pick ? (seen as ParsedPrompt | null)?.rowKey ?? null : step;
           if (key === null) return promptChanged();
           const first = !move && !committed;
-          if (!move) committed = true;
+          if (!move && !view) committed = true;
+          if (view) viewed = true;
           try {
             if (key.keys) await paneSendKeys(body.pane_id, key.keys);
             else if (key.text !== undefined) await paneSendText(body.pane_id, key.text);
@@ -3561,6 +3921,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
             if (first && error instanceof HerdrError && error.code === "connect_failed") committed = false;
             throw error;
           }
+          if (step.landing !== undefined && !(await pickerLanded(step.landing))) return promptChanged();
           if (move) {
             moved = true;
             walked = true;

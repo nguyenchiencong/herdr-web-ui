@@ -1,0 +1,16 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Scope: all | scoped
+tab scope (all/scoped)
+
+>
+
+→ ✓ gpt-5 [openai]
+    gemini-3-pro [google]
+
+  Model Name: GPT-5
+
+  Model catalogs refreshed.
+
+  Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

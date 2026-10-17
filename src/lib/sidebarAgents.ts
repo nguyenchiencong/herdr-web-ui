@@ -1,4 +1,5 @@
-import type { AgentInfo, HerdrPane, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
+import type { AgentInfo, HerdrPane, HibernatedPane, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
+import { isSleepAgentLabel, shownAgent } from "../../shared/sleep-agent.ts";
 import type { Translate } from "./i18n.ts";
 import { customTabLabel, tabLabel } from "./tabName.ts";
 
@@ -9,6 +10,8 @@ export interface SidebarAgent {
   agent: AgentInfo | null;
   canonicalAgent: string | null;
   agentLabel: string | null;
+  /** a pi session asleep in this pane (its annotation): listed beside the agents, dimmed, with an Asleep badge */
+  hibernated: HibernatedPane | null;
 }
 
 function nonblank(value: string | null | undefined): string | null {
@@ -36,10 +39,14 @@ export function sidebarAgents(snapshot: SessionSnapshot | null): SidebarAgent[] 
   snapshot.panes.forEach((pane, paneOrder) => {
     if (seen.has(pane.pane_id)) return;
     seen.add(pane.pane_id);
-    const agent = agentByPane.get(pane.pane_id) ?? null;
+    // a pi session asleep in its pane is listed by its sleep annotation, whether herdr names pi for the pane, the
+    // launcher's label, or none; the launcher's label is no agent, so a pane that carries only it is a plain terminal
+    const hibernated = (pane as HerdrPane).hibernated ?? null;
+    const listed = agentByPane.get(pane.pane_id) ?? null;
+    const agent = listed !== null && !isSleepAgentLabel(listed.agent) ? listed : null;
     const workspace = workspaceById.get(pane.workspace_id);
-    if (!workspace || (!agent && !nonblank(pane.agent))) return;
-    const canonicalAgent = nonblank(pane.agent) ?? nonblank(agent?.agent);
+    const canonicalAgent = nonblank(shownAgent(pane.agent, hibernated !== null)) ?? nonblank(agent?.agent) ?? nonblank(hibernated?.agent);
+    if (!workspace || (!agent && canonicalAgent === null)) return;
     const tab = tabById.get(pane.tab_id);
     rows.push({
       paneOrder,
@@ -49,8 +56,9 @@ export function sidebarAgents(snapshot: SessionSnapshot | null): SidebarAgent[] 
         tab: tab?.workspace_id === pane.workspace_id ? tab : null,
         agent,
         canonicalAgent,
+        hibernated,
         agentLabel: nonblank(agent?.display_agent) ?? nonblank(agent?.name)
-          ?? nonblank(pane.display_agent) ?? canonicalAgent ?? nonblank(agent?.title),
+          ?? nonblank(shownAgent(pane.display_agent, false)) ?? canonicalAgent ?? nonblank(agent?.title),
       },
     });
   });
@@ -68,6 +76,14 @@ export function sidebarAgents(snapshot: SessionSnapshot | null): SidebarAgent[] 
 export function paneMark(entry: SidebarAgent | undefined): string | null {
   if (!entry) return null;
   return entry.canonicalAgent ?? entry.agentLabel ?? "";
+}
+
+/**
+ * Whether a row shows its pi session as asleep. A PC that is away draws no state (DESIGN.md), so its sleeping
+ * session keeps its title, and the Asleep cue waits until the PC connects again.
+ */
+export function asleepCueShown(hibernated: HibernatedPane | null | undefined, online: boolean): boolean {
+  return online && hibernated != null;
 }
 
 /**

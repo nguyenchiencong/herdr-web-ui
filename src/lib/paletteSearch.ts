@@ -1,4 +1,5 @@
 import type { HerdrPane, PluginAction, PluginActions, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
+import { shownAgent } from "../../shared/sleep-agent.ts";
 import { t as moduleT, type Translate } from "./i18n.ts";
 import { paneStatus, type KnownStatus } from "./status.ts";
 import { tabLabel } from "./tabName.ts";
@@ -117,18 +118,19 @@ function fuzzyScore(query: string, candidate: string): number | null {
 }
 
 function searchableText(pane: HerdrPane, workspaceLabel: string, tabNames: readonly string[], branch: string): string[] {
+  // a pi session asleep is searched by the title it is named by: the launcher's `zz` title is not its name
+  const titles = pane.hibernated ? [pane.hibernated.title] : [pane.title ?? "", pane.terminal_title_stripped ?? "", pane.terminal_title ?? ""];
   return [
     pane.label ?? "",
-    pane.title ?? "",
-    pane.terminal_title_stripped ?? "",
-    pane.terminal_title ?? "",
+    ...titles,
     pane.cwd ?? "",
     pane.foreground_cwd ?? "",
     workspaceLabel,
     ...tabNames,
     branch,
-    pane.agent ?? "",
-    pane.display_agent ?? "",
+    // the launcher's label is searched as nothing: a sleeping pane is pi, and any other pane with it has no agent
+    shownAgent(pane.agent, pane.hibernated != null) ?? "",
+    shownAgent(pane.display_agent, false) ?? "",
   ];
 }
 

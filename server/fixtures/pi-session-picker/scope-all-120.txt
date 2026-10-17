@@ -1,0 +1,14 @@
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Resume Session (All)                                                 ○ Current Folder | ◉ All  Name: All  Sort: Threaded
+tab scope · re:<pattern> regex · "phrase" exact
+ctrl+s sort · ctrl+n named · ctrl+d delete · ctrl+p path (off) · ctrl+r rename
+
+>                                                                                                                       
+
+› refactor the sleep card                                                                        C:/Users/x/Dev/app 3 1d
+  session 1: wire the sleep card                                                                 C:/Users/x/Dev/app 5 2d
+  session 2: hello                                                                               C:/Users/x/Dev/app 7 3d
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

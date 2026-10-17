@@ -1,0 +1,14 @@
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Resume Session (Current Folder)                                      ◉ Current Folder | ○ All  Name: All  Sort: Threaded
+Delete session? enter confirm · escape/ctrl+c cancel
+
+
+>                                                                                                                       
+
+  refactor the sleep card                                                                                           3 1d
+› session 1: wire the sleep card                                                                                    5 2d
+  session 2: hello                                                                                                  7 3d
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

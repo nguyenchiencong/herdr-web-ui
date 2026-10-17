@@ -5,6 +5,7 @@ import { Bell, Columns2, CornerLeftUp, Folder, FolderOpen, FolderSearch, History
 import "./CommandPalette.css";
 
 import type { DirectoryListing, HerdrPane, PluginActions, SessionSnapshot, TabInfo } from "../../shared/protocol.ts";
+import { shownAgent } from "../../shared/sleep-agent.ts";
 import type { Machine } from "../../shared/machines.ts";
 import { ApiError } from "../lib/api.ts";
 import { paneStatus, STATUS_WORD } from "../lib/status.ts";
@@ -671,7 +672,7 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
                 const selected = row.machineId === machineId && pane.pane_id === selectedPaneId;
                 return (
                   <button key={targetKey(row)} data-machine={row.machineId} data-pane={pane.pane_id} id={`palette-item-${index}`} type="button" role="option" className="menu-item palette-pane" aria-selected={activeIndex === index} aria-current={selected ? "true" : undefined} onFocus={() => select(index)} onMouseMove={() => select(index)} onClick={() => runPane(row)}>
-                    <span className="palette-mark"><AgentMark agent={pane.agent ?? "shell"} /></span>
+                    <span className="palette-mark"><AgentMark agent={shownAgent(pane.agent, pane.hibernated != null) ?? "shell"} /></span>
                     <span className="menu-item-main"><span className="palette-row-title">{displayPaneTitle(pane)}{selected && <span className="palette-selected">{t("Selected")}</span>}</span><span className="palette-row-subtitle">{place}</span></span>
                     <StatusBadge status={paneStatus(pane)} />
                   </button>

@@ -1,0 +1,12 @@
+──────────────────────────────────────────────
+
+ Clear session?
+ This drops the current conversation.
+
+ → Yes
+   No
+
+ ↑↓ navigate  enter select  escape/ctrl+c
+ cancel
+
+──────────────────────────────────────────────

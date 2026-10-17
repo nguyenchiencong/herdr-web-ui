@@ -1,0 +1,14 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Only showing models from configured providers. Use /login to add providers.
+
+> qwen
+
+→   qwen-3-8 [openrouter]
+
+  Model Name: Qwen 3 8B
+
+  Model catalogs refreshed.
+
+  Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

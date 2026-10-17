@@ -505,6 +505,13 @@ One set for both themes: the card is island black wherever it shows.
   right-click or the context-menu key opens the menu, at the pointer or at the row, and dismissal
   returns the focus where it was.
 
+- A pi session asleep in its pane keeps its agent row: the pi mark and the session's title, with its mark
+  dimmed (the title and the badge keep their contrast). On a connected PC its state is a moon where a status would be, and the
+  word Asleep stands with the row's badges before the ⋯ (the status box has no room for a word), not the unknown
+  or offline style; a PC that is away keeps the title and draws no moon. The row is one row whichever way herdr
+  lists the sleeping pane (none, `pi`, or the launcher's own `zz pi` label, which is no agent of its own), and
+  a pane that carries only that label without a sleeping session is a plain terminal. The row sorts in its
+  workspace like any agent, and selecting it opens the pane's chat, whose card offers Resume and Quit while the launcher's banner is the pane's last line.
 - Close follows herdr's `ui.confirm_close`: a workspace close, or a pane close that takes its
   workspace with it, asks in a confirm first. A busy pane also asks before it stops. After a
   confirmed close, focus lands on the header's workspace-list toggle.
@@ -630,7 +637,7 @@ One set for both themes: the card is island black wherever it shows.
   the title over the place) and the compact state at the right. The leading glyph is the brand mark of the agent in the pane the row opens; a row that opens a
   shell shows the terminal glyph, and a linked worktree without an agent the branch glyph. The
   mark never stands for another pane's agent; the row's tooltip lists every agent in the
-  workspace. A custom worktree workspace name follows the branch on the same line in dim text.
+  workspace. A custom worktree workspace name follows the branch on the same line in dim text. A pi session asleep in the pane the row opens keeps the pi mark and draws a moon in the state cell, on a connected PC, labelled Asleep: the Agents row's moon (`.sidebar-asleep`, `--text-dim`, a `--space-3` square), where a status would be.
   Selection uses a neutral rounded fill; workspace rows have no amber rail or separate reorder
   gutter. Drag the row itself, or press `Alt+↑/↓` while its selector is focused, to reorder it.
   On a touch screen (`pointer: coarse`) the browser's drag is off: a long press (400ms, still
@@ -845,7 +852,7 @@ One set for both themes: the card is island black wherever it shows.
   when the title, the PC or the workspace does not already say it (`lib/headerCrumb.ts`). The
   title may shorten with an ellipsis; the crumb never does: when it does not fit whole beside the
   whole title it is not drawn, and the title has the row. The full path is in the context's
-  tooltip and at the top of the More menu. With no selection, the brand fills the context slot.
+  tooltip and at the top of the More menu. With no selection, the brand fills the context slot. A pi session asleep in its pane shows its own title here, not the launcher's `zz` one.
 - The More menu (`.header-more-button`, the `RowMenu` popover, a bottom sheet at `<=640px`) opens
   with the location on two lines, "PC › workspace" then the full path in mono, and holds
   **Browse files** and **Alerts**, each under the condition its own button had. New tab stays
@@ -1043,6 +1050,43 @@ One set for both themes: the card is island black wherever it shows.
 ### Prompt card (`.prompt-card`)
 - Appears in chat while the agent is blocked and the visible pane contains a supported Claude, omp,
   omo or codex question, approval or plan menu.
+- A pi session asleep in its pane (herdr names no agent for it, `pi` or the launcher's `zz pi` label; its sleep record and the launcher's
+  `zz` title show it) gets the sleep card instead, while the launcher's banner is the pane's last line: with output below the banner there
+  is no card, and the terminal is the way to wake it. Resume presses Enter, and Quit asks first, then sends a lone `q`. Each reads the
+  sleep record and the banner fresh before it sends, and neither is sent while a wake holds the pane. The card's look is the same
+  as the others', without keycaps: the message box does not answer it (a message sent from the box wakes the session with Enter alone, and is typed once pi is ready).
+- A wake holds its pane. Every Enter the server sends to wake a sleeping session (the card's Resume, a message from the box, or an
+  empty terminal line) is registered before it is sent, and nothing is typed into the pane until pi is named idle or done on the session
+  with the banner gone, and, where herdr named pi before the Enter, pi's `readyAt` marker or a rise of herdr's state counter. The hold ends
+  there, or 60 s after the Enter. A launcher that woke its session on its own (its timer, its socket, a key typed in the pane) holds the
+  pane the same way while its record reads awake and recent, without a `readyAt`. A message sent meanwhile is refused as `agent_waking`, with
+  nothing typed. A wake that runs out with pi not ready refuses the next message from the box once, as `agent_not_ready`, unless herdr
+  names pi for the pane (a sleep the wake left open is woken again instead). A sleep that begins after a wake ends it. A sleep that began less than 15 s ago (`SLEEP_TITLE_WAIT_MS`), with no `zz` title on its pane while pi is still going to sleep,
+  takes no message either, and is refused as `agent_waking`. An older sleep record with no title holds nothing: its launcher's pid
+  may have been reused by another process, and a pane restored as a plain shell must take input. The sleep launcher
+  (`pi-launcher-hibernate.mjs`, the copy in the user's `~/.pi/patches`, outside this repo) marks its record awake (with `endedAt`)
+  before it clears the title, so an external wake leaves no title-less window. A launcher already running keeps the order it started
+  with: a sleep under an earlier one clears the title first, and that window is covered only while its sleep is younger than 15 s
+  (`SLEEP_TITLE_WAIT_MS`). A wake this server began is held by its marker at any age.
+- pi's `/resume` session picker (its layout is read: the scope line, the search line, the rows and the
+  closing rule; a screen with another layout is no picker) gets the
+  picker card, its rows as the options. A row tap moves pi's cursor to the row and presses Enter, each
+  step checked against the row's place and text on the screen. The search field types its text with no
+  Enter (`search_text`, after Ctrl+K and Ctrl+U clear the line). The scope control presses Tab; Earlier
+  and Later press repeated arrows and wait for the cursor to land; Cancel presses Escape. Delete, rename
+  and sort keys are never sent, and a delete asked in the terminal, or a list still loading, offers
+  Cancel alone. The look: the search field sends on Enter or Search; the scope is a two-option control;
+  rows are at least 44px tall, with a two-line label and a muted description; `n–m of N` sits with Earlier,
+  Later and Cancel; the rows scroll inside the card and are the part that gives way (down to two and a
+  half rows), so the card keeps to its height without scrolling as well. The rows carry no numbers, so the
+  message box's placeholder points to the card instead of offering `1–n`. In the chat, a typed number or row name never picks a row:
+  the message box refuses it with `Choose in the card above.`
+- pi's `/thinking` level selector (its layout is read: the title, the levels with their marks, and the hint
+  that closes the list; a screen with another layout is no selector) gets a card whose options are its
+  levels, the current one named in the question. A tap presses the arrows from the cursor's row to the
+  chosen level, each step checked against the row it lands on, then Enter, which sets the level for this
+  session. The key that saves a level as the default is never sent, a list of one level is no card, and
+  the card has no search of its own: a filter typed in pi narrows the levels it reads.
 - Placement: docked on the composer's column, directly above the input card, on the card's width
   and gutter (`--chat-w`). It is not part of the transcript and does not scroll with it. The
   stack from the top is transcript, held messages (folded to their caption while a card is
@@ -1325,7 +1369,7 @@ One set for both themes: the card is island black wherever it shows.
   (`<=480px`): neither the header nor Files offers a palette button. Use a wider screen;
   a connected keyboard can still open it with `Mod+Shift+K` (or the configured binding).
 - `Mod+Shift+K` opens a top-offset `--palette-w` dialog searching panes across all connected PCs
-  and the selected PC's actions. PC names participate in search. Recent panes
+  and the selected PC's actions. PC names participate in search. A pi session asleep in its pane is found by its session's title and by its agent, not by the launcher's `zz` title. Recent panes
   lead an empty query; arrows in the search field cycle through visible results, Enter activates
   and Escape closes. IME candidate, commit and cancel keys stay with composition. Buttons reached
   with Tab keep their native activation, and arrow navigation scrolls the selected result into view.
@@ -1603,7 +1647,7 @@ The values are the ones in `src/styles.css`.
   actions are not available in the phone touch UI; a wider screen or keyboard is required.
   The key bar sends terminal input only; it is not an app-action toolbar. Hardware keyboards use
   the same global bindings on phones and desktops.
-- `document.title` is `<pane title> · herdr` while selected, otherwise `herdr web ui`.
+- `document.title` is `<pane title> · herdr` while selected, otherwise `herdr web ui`. A pi session asleep in its pane names the document by its own title.
 
 ### Accepted debt
 

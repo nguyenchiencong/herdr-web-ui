@@ -1,0 +1,14 @@
+
+────────────────────────────────────
+
+○ Current Folder | ◉ All  Name: All 
+tab scope · re:<pattern> regex · "p…
+ctrl+s sort · ctrl+n named · ctrl+d…
+
+>                                   
+
+› refactor … C:/Users/x/Dev/app 3 1d
+  session 1… C:/Users/x/Dev/app 5 2d
+  session 2… C:/Users/x/Dev/app 7 3d
+
+────────────────────────────────────

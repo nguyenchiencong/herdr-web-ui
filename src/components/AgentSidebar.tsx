@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Pin, PinOff, Terminal } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Moon, Pin, PinOff, Terminal } from "lucide-react";
 
 import type { Machine } from "../../shared/machines.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
 import { useT } from "../lib/i18n.ts";
-import { activityDots, activityGlyphs, activityWords, agentContext, agentTabName, paneMark, sidebarAgents, type SidebarAgent } from "../lib/sidebarAgents.ts";
+import { activityDots, activityGlyphs, activityWords, agentContext, agentTabName, asleepCueShown, paneMark, sidebarAgents, type SidebarAgent } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { activityOrder } from "../lib/sidebarOrder.ts";
@@ -29,6 +29,8 @@ interface AgentRowBodyProps {
   status?: AgentStatus;
   /** the pane's activity glyphs (activityDots): drawn after the badges, said in words for a screen reader */
   dots?: string | null;
+  /** a pi session asleep in its pane: the row is dimmed and says Asleep where a status would be */
+  asleep?: boolean;
   /** a pinned row carries a pin after its title; its list says so to a screen reader */
   pinned?: boolean;
 }
@@ -37,7 +39,7 @@ interface AgentRowBodyProps {
  * One agent in a list: the coding agent's mark, what it is working on, who and where it is, and
  * how it is doing.
  */
-function AgentRowBody({ mark, markKind, title, name, context, backgroundTasks, plan, status, pinned, dots }: AgentRowBodyProps) {
+function AgentRowBody({ mark, markKind, title, name, context, backgroundTasks, plan, status, pinned, dots, asleep = false }: AgentRowBodyProps) {
   const t = useT();
   const words = dots ? activityWords(dots, t) : "";
   return <>
@@ -54,9 +56,10 @@ function AgentRowBody({ mark, markKind, title, name, context, backgroundTasks, p
         {context}
       </span>}
     </span>
-    <span className="agent-row-status"><BackgroundBadge count={backgroundTasks} /><PlanBadge plan={plan} />{dots ? <span className="agent-activity" role="img" aria-label={words} title={words}>{dots}</span> : null}</span>
-    {/* drawn at the row's right edge, after its ⋯, as a workspace row's state is (AgentSidebar.css) */}
-    <span className="agent-row-state"><StatusBadge status={status} compact /></span>
+    <span className="agent-row-status"><BackgroundBadge count={backgroundTasks} /><PlanBadge plan={plan} />{dots ? <span className="agent-activity" role="img" aria-label={words} title={words}>{dots}</span> : null}{asleep ? <span className="agent-asleep">{t("Asleep")}</span> : null}</span>
+    {/* drawn at the row's right edge, after its ⋯, as a workspace row's state is (AgentSidebar.css); a sleeping
+        session's moon stands there, a status dot's size, and its word goes with the badges, where a word has room */}
+    <span className="agent-row-state">{asleep ? <Moon className="agent-asleep-mark" aria-hidden="true" /> : <StatusBadge status={status} compact />}</span>
   </>;
 }
 
@@ -124,10 +127,12 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const machineName = (machine: Machine): string | null => machines.length > 1 ? machine.name : null;
 
   const agentItem = ({ machine, entry }: AgentRow) => {
-    const { pane, workspace, tab, agent, agentLabel } = entry;
-    const selected = machine.id === selectedMachineId && pane.pane_id === selectedPaneId;
+    const { pane, workspace, tab, agent, agentLabel, hibernated } = entry;
     const online = machine.state === "connected";
-    const title = pane.label?.trim() || agent?.title?.trim() || pane.title?.trim() || displayPaneTitle(pane);
+    // a PC that is away draws no state: its sleeping session keeps its title, and the Asleep cue waits for the PC
+    const asleep = asleepCueShown(hibernated, online);
+    const selected = machine.id === selectedMachineId && pane.pane_id === selectedPaneId;
+    const title = pane.label?.trim() || hibernated?.title.trim() || agent?.title?.trim() || pane.title?.trim() || displayPaneTitle(pane);
     const name = agent?.name?.trim() || null;
     // the name has its own place on the line: the label beside it says the kind instead
     const kindLabel = name !== null && agentLabel === name ? entry.canonicalAgent ?? agent?.title?.trim() ?? null : agentLabel;
@@ -148,12 +153,12 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     // one menu for the ⋯ and a right-click, which opens it at the pointer and leaves the focus where it was
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void =>
       setMenu(menuOpen ? null : { key: pinKey, anchor, point, previousFocus, title, place: context });
-    return <li className={`agent-item${selected ? " is-selected" : ""}${online ? "" : " is-offline"}`} key={paneStorageId(machine.id, pane.pane_id)} data-machine={machine.id} data-pane={pane.pane_id} data-pin-key={pinKey}
+    return <li className={`agent-item${selected ? " is-selected" : ""}${online ? "" : " is-offline"}${asleep ? " is-asleep" : ""}`} key={paneStorageId(machine.id, pane.pane_id)} data-machine={machine.id} data-pane={pane.pane_id} data-pin-key={pinKey}
       onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
       onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
       <button type="button" className="agent-select agent-row" disabled={!online} aria-current={selected ? "true" : undefined} title={tooltip} onClick={() => onSelect(machine.id, pane.pane_id)}>
         {/* a saved roster's state is not news: a PC that is away says nothing about its agents */}
-        <AgentRowBody mark={mark} markKind={markKind} title={title} name={name} context={context} backgroundTasks={online && !subagentsInDots ? pane.background_tasks : 0} plan={online ? pane.plan : undefined} status={online ? activity.status(machine.id, pane) : undefined} dots={dots} pinned={pinned.includes(pinKey)} />
+        <AgentRowBody mark={mark} markKind={markKind} title={title} name={name} context={context} backgroundTasks={online && !subagentsInDots ? pane.background_tasks : 0} plan={online ? pane.plan : undefined} status={online ? activity.status(machine.id, pane) : undefined} dots={dots} pinned={pinned.includes(pinKey)} asleep={asleep} />
       </button>
       <div className="agent-actions">
         <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>

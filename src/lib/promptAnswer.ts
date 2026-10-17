@@ -23,10 +23,13 @@ function bareLabel(label: string): string {
   return label.replace(/\s*\((?:[a-z]|esc|recommended)\)$/i, "").trim().toLowerCase();
 }
 
-/** null: the prompt only takes its options, and the text names none of them. */
+/**
+ * null: the prompt only takes its options, and the text names none of them; or the prompt is pi's session picker, which is
+ * answered in its card alone (its rows carry no numbers, so a typed number or a typed row name never picks one).
+ */
 export function answerFromText(prompt: InteractivePrompt, text: string): TypedAnswer | null {
   const value = text.trim();
-  if (!value) return null;
+  if (!value || isPicker(prompt)) return null;
   const valid = choices(prompt);
   const byNumber = (token: string): number | null => {
     if (!/^\d+$/.test(token)) return null;
@@ -53,8 +56,15 @@ function range(prompt: InteractivePrompt): string {
   return numbers.length > 1 ? `${numbers[0]}–${numbers.at(-1)}` : String(numbers[0] ?? 1);
 }
 
+/** pi's session picker (server/prompt.ts parsePiSessionPicker): its search and its own controls mark it */
+function isPicker(prompt: InteractivePrompt): boolean {
+  return prompt.search !== undefined || prompt.actions !== undefined;
+}
+
 /** How a typed message answers this prompt: the composer's placeholder while it waits. */
 export function answerHint(prompt: InteractivePrompt): string {
+  // pi's session picker draws no numbers, and its rows are a window into a longer list: it is answered in the card
+  if (isPicker(prompt)) return prompt.options.length > 0 ? t("Choose a session in the card above…") : t("Answer in the card above…");
   if (prompt.multi_select) return t("Type the numbers you choose, e.g. 1 3");
   // a free-form question (Codex's queue) has no options to number
   if (choices(prompt).length === 0) return t("Type your reply…");
@@ -65,6 +75,7 @@ export function answerHint(prompt: InteractivePrompt): string {
 
 /** Why a message was not sent: the prompt takes only its options (answerFromText gave null). */
 export function answerRefusal(prompt: InteractivePrompt): string {
+  if (isPicker(prompt)) return t("Choose in the card above.");
   return prompt.multi_select
     ? t("Choose with the option numbers above, e.g. 1 3.")
     : t("Choose one of the options above: type {range}.", { range: range(prompt) });

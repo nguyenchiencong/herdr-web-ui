@@ -1,0 +1,15 @@
+
+──────────────────────────────────────────────
+
+◉ Current Folder | ○ All  Name: All  Sort: Thr
+tab scope · re:<pattern> regex · "phrase" exa…
+ctrl+s sort · ctrl+n named · ctrl+d delete · …
+
+>                                             
+
+› root message                           10 1d
+     ├─ fork a                            4 1d
+     │  └─ grand                          2 1d
+     └─ root message                      6 2d
+
+──────────────────────────────────────────────

@@ -153,6 +153,17 @@ function backfillPanes(): void {
 backfillPanes();
 for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === OMO_TASKS_PANE) Object.assign(pane, { background_tasks: 2 });
 for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === "api") Object.assign(pane, { plan: { done: 1, total: planSteps.length, current: "Adding the replay metric" } });
+// A pi session its sleep launcher holds (server/pi-sleep.ts annotateHibernated), for a page that names the
+// pane's fixture key in window.demoAsleep before this script runs (scripts/prompt-dock-demo-regression.ts):
+// herdr names no agent for it, its title is the launcher's `zz <title>`, and the server's annotation lists it.
+// The published demo sets none.
+const demoAsleep = (window as { demoAsleep?: unknown }).demoAsleep;
+for (const pane of snapshot().panes) {
+  if (typeof demoAsleep !== "string" || keyOfPane.get(pane.pane_id) !== demoAsleep) continue;
+  const title = pane.label ?? pane.title ?? "";
+  Object.assign(pane, { agent: null, agent_status: "unknown", label: null, title: `zz ${title}`, terminal_title: `zz ${title}`, terminal_title_stripped: `zz ${title}`, hibernated: { agent: "pi", title, slept_at: ago(42), next_due_at: null } });
+  local.snapshot!.agents = snapshot().agents.filter((agent) => agent.pane_id !== pane.pane_id);
+}
 
 // Fictional repositories keep their checkout catalog after a workspace closes. The list joins
 // each checkout to the current snapshot, so closed checkouts can be opened again without git.
@@ -1526,7 +1537,7 @@ setTimeout(() => {
 // On a desktop the app opens a pane in its terminal, where the demo has only a notice: agent
 // panes open in the chat here unless this browser already chose (the same key the app writes).
 for (const pane of snapshot().panes) {
-  if (!pane.agent) continue;
+  if (!pane.agent && !("hibernated" in pane)) continue;
   const key = `herdr-web-ui:view:${pane.pane_id}`;
   try { if (window.localStorage.getItem(key) === null) window.localStorage.setItem(key, "chat"); } catch { /* storage blocked: the app falls back to its default */ }
 }

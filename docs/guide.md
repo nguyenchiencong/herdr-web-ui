@@ -151,7 +151,7 @@ Every agent herdr runs shows up with its live status, terminal and alerts. The c
 | **omp** | Native session file | ✓ |
 | **omo** | Native session file, found through the pane's process tree | — use Terminal |
 | **gjc** | Native session file identified by GJC's SDK broker and the pane's process | — use Terminal |
-| **pi** | Native session file, resolved through herdr; after `/tree`, the branch in play | ✓ its dialogs: a question, a confirmation, an answer typed in |
+| **pi** | Native session file, resolved through herdr; after `/tree`, the branch in play | ✓ its dialogs: a question, a confirmation, an answer typed in; the `/model` list and the `/thinking` level (picked for the session) |
 | **OpenCode** | Native session in OpenCode 2's own database, resolved through herdr: `~/.local/share/opencode/opencode.db` (`%USERPROFILE%\.local\share\opencode\opencode.db` on Windows), or where the server's `XDG_DATA_HOME` or `OPENCODE_DB` puts it | — use Terminal |
 | **Devin CLI** | Native SQLite session, showing the active branch when herdr or the live process explicitly identifies the session; otherwise terminal text | — use Terminal |
 | **Grok** | Linux native update log with exact process/session evidence, on the `grok-1.0.50-linux-x86_64` build only; other builds use Terminal. See [Grok setup and limits](grok-chat.md). | — use Terminal |
@@ -175,6 +175,8 @@ unreadable history uses the terminal-text fallback, including histories beyond t
 5,000-node or 8 MiB bounds. Long tool output is shortened with a truncation marker; use
 Terminal for the rest. The database is opened read-only, though SQLite may create its
 WAL coordination files beside it.
+
+A pi session asleep in its pane stays a chat that reads its transcript, and its row in the Agents list says Asleep (on a connected PC). Its card offers Resume or Quit (Quit asks first) while the sleep launcher's banner, "Enter to resume, q to quit", is the pane's last line; with output below the banner there is no card, and Enter in the terminal wakes it. A message sent from the composer wakes the session with Enter first and is typed once pi is ready. If pi would restore an unsent draft, or is not ready in time, nothing is typed and the text stays in the composer. A message sent while pi is still waking (for up to a minute after the wake starts), or while it is going to sleep and its pane does not yet show as asleep (for up to 15 seconds), is refused the same way, so it never lands in a pi that is still starting or exiting. In the terminal, an empty line only wakes it, and a lone `q` quits it, as the banner says. pi's `/resume` picker is a card too: search the sessions, switch between the current folder and all folders, page through the rest of the list a page at a time, or cancel. It never deletes, renames or sorts a session, and a number or session name typed in the message box does not pick one: the card does.
 
 When the last visible line is a familiar password, SSH passphrase or PIN request, both
 views show a **Password or PIN** field. It hides what you type and sends it directly
